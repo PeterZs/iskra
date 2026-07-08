@@ -8,4 +8,5 @@ and then have a separate page for each submodule.
 ::: iskra.geometry.volume
 ::: iskra.geometry.normals
 ::: iskra.geometry.cotan_weights
+::: iskra.geometry.angles
 ::: iskra.geometry.coordinate_system

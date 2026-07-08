@@ -2,6 +2,7 @@
 
 import iskra.geometry.dual_quaternions as dual_quat
 import iskra.geometry.quaternions as quat
+from iskra.geometry.angles import interior_angles
 from iskra.geometry.barycentric import (
     barycentric_coordinates,
     barycentric_interpolate,
@@ -36,7 +37,12 @@ from iskra.geometry.distances import (
 from iskra.geometry.dual_quaternions import DualQuaternion
 from iskra.geometry.element_quality import abs_tetrahedron_heights, triangle_altitudes
 from iskra.geometry.extrude_boundary import extrude_boundary_polygon
-from iskra.geometry.normals import edge_normals, triangle_area_normals, triangle_normals
+from iskra.geometry.normals import (
+    edge_normals,
+    triangle_area_normals,
+    triangle_normals,
+    vertex_normals,
+)
 from iskra.geometry.quaternions import Quaternion
 from iskra.geometry.volume import (
     edge_lengths,
@@ -92,4 +98,6 @@ __all__ = [
     "cotan_weights_intrinsic",
     "triangle_areas_intrinsic",
     "tetrahedron_volumes_intrinsic",
+    "interior_angles",
+    "vertex_normals",
 ]

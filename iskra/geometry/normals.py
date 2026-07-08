@@ -4,7 +4,8 @@ from typing import Literal
 
 import torch
 
-from iskra.topology import face_to_subface_idcs, reduce_on_subface
+from iskra.geometry.angles import interior_angles
+from iskra.topology import face_index, reduce_on_subface
 
 
 def edge_length_normals(edges: torch.Tensor) -> torch.Tensor:
@@ -82,7 +83,22 @@ def triangle_normals(triangles: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.normalize(triangle_area_normals(triangles), dim=-1)
 
 
-def area_face_normals(simplices: torch.Tensor) -> torch.Tensor:
+def volume_face_normals(simplices: torch.Tensor) -> torch.Tensor:
+    """Computes face normals weighted by the hypervolume of the element.
+
+    Thin wrapper dispatching to either `iskra.edge_length_normals()` or
+    `iskra.triangle_area_normals()`. Works on triangle meshes in 3D and polylines in 2D.
+
+    Args:
+        simplices (Tensor[Float, [Bs, S, Dim]]): Simplices tensor s.t. second to
+            last dimension represent corners, last represents coordinates.
+
+    Raises:
+        NotImplementedError: Simplices must have either 2 or 3 corners.
+
+    Returns:
+        Tensor[Float, [Bs, S, Dim]]: Volume weighted face normals.
+    """
     n_simplex_verts = simplices.shape[-2]
     if n_simplex_verts == 3:
         return triangle_area_normals(simplices)
@@ -93,6 +109,21 @@ def area_face_normals(simplices: torch.Tensor) -> torch.Tensor:
 
 
 def face_normals(simplices: torch.Tensor) -> torch.Tensor:
+    """Computes per-face normals.
+
+    Thin wrapper dispatching to either `iskra.edge_normals()` or
+    `iskra.triangle_normals()`. Works on triangle meshes in 3D and polylines in 2D.
+
+    Args:
+        simplices (Tensor[Float, [Bs, S, Dim]]): Simplices tensor s.t. second to
+            last dimension represent corners, last represents coordinates.
+
+    Raises:
+        NotImplementedError: Simplices must have either 2 or 3 corners.
+
+    Returns:
+        Tensor[Float, [Bs, S, Dim]]: Face normals.
+    """
     n_simplex_verts = simplices.shape[-2]
     if n_simplex_verts == 3:
         return triangle_normals(simplices)
@@ -102,61 +133,65 @@ def face_normals(simplices: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError("Normals only supported for edges and triangles.")
 
 
-def interior_angles(
-    triangles: torch.Tensor,
-    signed: bool = False,
-    face_normals: torch.Tensor | None = None,
-) -> torch.Tensor:
-    # Get vertices opposite the corner vertex:
-    idcs: list[tuple[int, ...]] = face_to_subface_idcs(2, 1)
-    opposite_vecs = torch.stack([triangles[..., nbh_idx, :] for nbh_idx in idcs], -3)
-    vecs = opposite_vecs - triangles[..., :, None, :]
-    vecs = torch.nn.functional.normalize(vecs, dim=-1)
-
-    cos_theta = torch.linalg.vecdot(vecs[..., :, 0, :], vecs[..., :, 1, :], dim=-1)
-    cross = torch.linalg.cross(vecs[..., :, 0, :], vecs[..., :, 1, :], dim=-1)
-    if signed:
-        if face_normals is None:
-            face_normals = triangle_normals(triangles)
-        sin_theta = torch.linalg.vecdot(cross, face_normals[:, None, :], dim=-1)
-    else:
-        sin_theta = torch.linalg.vector_norm(cross, dim=-1)
-    angles = torch.atan2(sin_theta, cos_theta)
-    return angles
-
-
 def vertex_normals(
-    vertices: torch.Tensor,
+    verts: torch.Tensor,
     faces: torch.Tensor,
     method: Literal["default", "graph", "area", "angle"] = "default",
 ) -> torch.Tensor:
-    simplices = vertices[faces.flatten()].reshape(
-        -1, faces.shape[-1], vertices.shape[-1]
-    )
-    face_normals = area_face_normals(simplices)
-    if method == "graph":
-        face_normals = torch.nn.functional.normalize(face_normals, dim=-1)
+    """Comptues per-vertex normals.
 
+    Normals are computed per face and then reduced to the vertices using a
+    a weighted average. The weighting is determined via the argument `method`.
+    The function works for triangle meshes in 3D and polylines in 2D.
+
+    Args:
+        verts (Tensor[Float, [V, 2 | 3]]): Mesh vertex positions.
+        faces (Tensor[Int, [F, 2 | 3]]): Mesh face indices.
+        method (Literal["default", "graph", "area", "angle"]): Normal averaging method.
+            One of:
+
+            - **`default`**: selects angle weighing for triangle meshes and area
+                weighing for polyline meshes. Chosen by default.
+            - **`area`**: weighs each face normal by that face's hypervolume,
+                approximating an integrated normal vector.
+            - **`angle`**: angle-based normal vectors based on the heuristic from
+                [TODO: cite]. By far the most visually pleasent, but only work
+                on 3D meshes and a bit less theoretically justified than others.
+            - **`graph`**: each face normal gets weight 1.0.
+
+    Raises:
+        ValueError: Passing `method=angle` for a polyline mesh with raise an error.
+        ValueError: `method` must be in `["default", "graph", "area", "angle"`]`.
+        NotImplementedError: Simplices must have either 2 or 3 corners.
+
+    Returns:
+        Tensor[Float, [V, 2 | 3]]: Vertex-based normals
+    """
+    simplices = face_index(verts, faces)
+    volume_normals = volume_face_normals(simplices)
     if faces.shape[-1] == 2:
-        if method == "area":
-            raise NotImplementedError
-
-        normals = reduce_on_subface(face_normals, faces, vertices.shape[0], "sum")
+        if method in ("area", "default"):
+            normals = reduce_on_subface(volume_normals, faces, verts.shape[0], "sum")
+        elif method == "graph":
+            face_normals = torch.nn.functional.normalize(volume_normals, dim=-1)
+            normals = reduce_on_subface(face_normals, faces, verts.shape[0], "sum")
+        elif method == "angle":
+            raise ValueError("Angle normals not well defined for polylines.")
+        else:
+            raise ValueError(f"Unknown normal computation method {method}.")
     elif faces.shape[-1] == 3:
         if method in ("default", "angle"):
-            face_normals = torch.nn.functional.normalize(face_normals, dim=-1)
-
-            normals = torch.zeros([vertices.shape[0], 3], device=face_normals.device)
-            broadcast_faces = faces[:, :, None].expand(-1, -1, 3)
-            # TODO: angles undefined, fix.
+            face_normals = torch.nn.functional.normalize(volume_normals, dim=-1)
             angles = interior_angles(simplices, signed=False, face_normals=face_normals)
-            for i in range(faces.shape[-1]):
-                normals.scatter_add_(
-                    0, broadcast_faces[:, i, ...], angles[:, i : i + 1] * face_normals
-                )
+            angle_normals = angles[..., :, None] * face_normals[..., None, :]
+            normals = reduce_on_subface(angle_normals, faces, verts.shape[0], "sum", 1)
+        elif method == "graph":
+            face_normals = torch.nn.functional.normalize(volume_normals, dim=-1)
+            normals = reduce_on_subface(face_normals, faces, verts.shape[0], "sum")
+        elif method == "area":
+            normals = reduce_on_subface(volume_normals, faces, verts.shape[0], "sum")
         else:
-            normals = reduce_on_subface(face_normals, faces, vertices.shape[0], "sum")
+            raise ValueError(f"Unknown normal computation method {method}.")
     else:
         raise NotImplementedError("Normals only supported for edges and triangles.")
-
     return torch.nn.functional.normalize(normals, dim=-1)

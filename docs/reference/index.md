@@ -1,3 +1,2 @@
-# `iskra ✨` Mesh
+# `iskra ✨` Reference Documentation
 
-::: iskra.mesh

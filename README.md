@@ -2,7 +2,6 @@
 
 # `iskra` ✨ Modern Geometry Processing
 
-
 Lightweight geometry processing library that is a one-stop shop for all your geometric needs. Iskra is:
 * modern and Python-first,
 * simple by default, powerful when needed,
@@ -67,3 +66,4 @@ pip install --no-build-isolation -Ceditable.rebuild=true -ve .
 
 ## FAQ
 1. **Why the name?** Iskra means “spark” in Serbo-Croatian: a spark enables using (a) torch. We also expect our system to be the spark that ignites exciting research in geometry. Most importantly, it sounds cool.
+2. **How much of `iskra` ✨ is LLM generated?** Iskra started back in 2022 at the start of my PhD because I enjoy writing and learning geometry algorithms. It is therefore almost entirely good old fashioned free range human generated slop, except for a select few parts. These are clearly marked in the codebase. [As a side-note, doing it this way had some benefits beyond being fun: being deeply bonded with geometry code in PyTorch lead me to come up with the tensor-based scatter-gather abstraction and I do not think I would have done so had I computer-slopped it together!]

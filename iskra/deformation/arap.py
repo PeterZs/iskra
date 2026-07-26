@@ -21,10 +21,10 @@ from iskra.mesh import Mesh
 from iskra.profiling import global_profiler, profile_block, profile_fn
 from iskra.signed_svd import closest_rot_3x3, polar_3x3, signed_svd
 from iskra.topology import (
-    edge_to_vertex_adjacency,
     face_index,
+    get_vert_vert,
     reduce_on_subface,
-    vertex_adjacency,
+    scatter_edge_to_vert_vert,
 )
 
 LOGGER = getLogger(__name__)
@@ -216,7 +216,7 @@ def arap_precompute(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, spla.SolverT]:
     """Precomputes data necessary to run ARAP deformations.
 
-    !!! note
+    Important:
         It is necessary to clamp the ARAP weights to be positive.
         Otherwise, the SVD procedure is not guaranteed to lead to the closest rotation.
         We allow setting it to None to match the libigl implementation,
@@ -236,9 +236,9 @@ def arap_precompute(
         spla.SolverT: Factorized Laplacian solver.
     """
     n_verts = verts.shape[0]
-    vert_vert = vertex_adjacency(faces)
+    vert_vert = get_vert_vert(faces)
     weights = cotan_weights(verts, faces, clamp_min=lap_clamp)
-    vert_vert_weights = edge_to_vertex_adjacency(weights)
+    vert_vert_weights = scatter_edge_to_vert_vert(weights)
     lap = laplacian_from_weights(weights, faces)
     unknown_idx = sp.index_complement(n_verts, handle_idx)
     lap_uk = spla.quad_energy_mat(lap, unknown_idx)

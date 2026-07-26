@@ -33,11 +33,11 @@ from iskra.profiling import global_profiler, profile_block, profile_fn
 from iskra.signed_svd import closest_rot_3x3
 from iskra.topology import (
     boundary,
-    edge_to_vertex_adjacency,
     face_index,
     get_subfaces,
+    get_vert_vert,
     reduce_on_subface,
-    vertex_adjacency,
+    scatter_edge_to_vert_vert,
 )
 
 LOGGER = getLogger(__name__)
@@ -325,9 +325,9 @@ def main(
         )
     handle_idx = torch.cat([bdr_idx, control_idx])
     edges, _, _ = get_subfaces(faces)
-    vert_vert = vertex_adjacency(faces)
+    vert_vert = get_vert_vert(faces)
     weights = cotan_weights(verts, faces, clamp_min=1e-5)
-    vert_vert_weights = edge_to_vertex_adjacency(weights)
+    vert_vert_weights = scatter_edge_to_vert_vert(weights)
     lap = laplacian_from_weights(weights, faces)
     unknown_idx = sp.index_complement(mesh.n_vertices, handle_idx)
     lap_uk = spla.quad_energy_mat(lap, unknown_idx)

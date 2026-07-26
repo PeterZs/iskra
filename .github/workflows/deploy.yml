@@ -1,8 +1,8 @@
-name: mkdocs
+name: Docs
+
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,25 +10,50 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.x"
+          activate-environment: iskra
+          environment-file: environment.yaml
+          auto-activate-base: false
 
-      - name: Install Dependencies
+      - name: Install docs deps and package
         run: |
-          pip install mkdocs mkdocs-material mkdocstrings mkdocs-material-extensions mkdocs-autolinks-plugin mkdocstrings-python griffe griffe-typingdoc
+          conda env update -f environment-dev.yaml
+          pip install --no-build-isolation -e .
 
-      - name: Build Site
-        run: mkdocs build
+      - name: Build Sphinx site
+        run: |
+          rm -rf docs/api/generated docs/_build
+          sphinx-build -b html docs docs/_build/html
 
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
-        run: mkdocs gh-deploy --force
+        id: deployment
+        uses: actions/deploy-pages@v4

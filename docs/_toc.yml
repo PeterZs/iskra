@@ -1,0 +1,39 @@
+root: index
+options:
+  caption: "Home"
+  maxdepth: 1
+entries:
+  - file: guide/index
+    options:
+      hidden: True
+    entries:
+      - file: guide/scatter-gather
+        options:
+          hidden: False
+      - file: guide/sparse
+        options:
+          hidden: False
+      - file: guide/inverse
+        options:
+          hidden: False
+  - file: api/index
+    options:
+      maxdepth: 1
+    entries:
+      - file: api/topology
+      - file: api/sparse
+      - file: api/geometry
+      - file: api/operators
+      - file: api/adjoint
+      - file: api/random
+      - file: api/directional
+      - file: api/deformation
+      - file: api/io
+      - file: api/signed_svd
+      - file: api/skinning
+      # - file: api/upsample
+      # - file: api/mesh
+      # - file: api/mlp
+      # - file: api/mollifiers
+      # - file: api/logging
+      # - file: api/profiling

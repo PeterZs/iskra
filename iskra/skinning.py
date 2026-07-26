@@ -4,9 +4,7 @@ import dataclasses
 from bisect import bisect_left, insort
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Generic, TypeVar, Literal, cast
-
-from easing_functions import CubicEaseInOut
+from typing import TYPE_CHECKING, Generic, Iterable, Literal, TypeVar, cast
 
 from iskra.mesh import BBox, Mesh
 
@@ -19,6 +17,23 @@ import torch
 
 from iskra.geometry import barycentric_interpolate, dual_quat, edge_lengths, quat
 from iskra.topology import face_index
+
+
+class CubicEaseInOut:
+    def __init__(self, start: float, end: float, duration: float) -> None:
+        self.start = start
+        self.end = end
+        self.duration = duration
+
+    def __call__(self, t: float) -> float:
+        t /= self.duration
+
+        if t < 0.5:
+            eased = 4 * t**3
+        else:
+            eased = 1 - (-2 * t + 2) ** 3 / 2
+
+        return self.start + (self.end - self.start) * eased
 
 
 @dataclass

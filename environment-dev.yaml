@@ -19,16 +19,17 @@ dependencies:
       - pytest-cases
       - pytest-cov
       # Documentation
-      - mkdocs==1.6.1
-      - mkdocs-material==9.6
-      - mkdocstrings==0.28
-      - mkdocstrings-python
-      - mkdocs-autorefs==1.4.3
-      # - mkdocs==1.6.1
-      # - mkdocs-materialx==10.1.8
-      # - mkdocstrings
-      # - mkdocstrings-python
-      - griffe_typingdoc
+      # Pin Sphinx stack: shape_tooltips + Napoleon Returns monkeypatch must be
+      # re-checked when upgrading these packages.
+      - sphinx==9.1.0
+      - pydata-sphinx-theme==0.20.0
+      - myst-parser==5.1.0
+      - sphinx-design==0.7.0
+      - sphinx-copybutton==0.5.2
+      - sphinx-external-toc==1.1.0
+      - sphinx-autobuild==2025.8.25
+      - sphinx_github_style==1.2.2
+      - sphinx-math-dollar==1.3
       # Deployment
       - nanobind>=2.5.0
       - scikit-build-core>=0.10.7

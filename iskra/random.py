@@ -301,4 +301,3 @@ def sample_circle(n_samples: int, device: torch.device | str = "cuda") -> torch.
     samples = torch.empty([n_samples], device=device).uniform_(-torch.pi, torch.pi)
     samples = torch.stack([samples.cos(), samples.sin()], -1)
     return samples
-

@@ -4,6 +4,7 @@
     "python.linting.mypyEnabled": false,
     "python.languageServer": "Default",
     "editor.formatOnSave": true,
+    "editor.inlayHints.enabled": "off",
     "[python]": {
         "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,

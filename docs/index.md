@@ -12,8 +12,8 @@ Lightweight geometry processing library that is a one-stop shop for all your geo
 Support the project by starring it here:
 [![GitHub stars](https://img.shields.io/github/stars/anadodik/iskra?style=social)](https://github.com/anadodik/iskra/stargazers)
 
-!!! warning
-    This is a pre-release. We are actively working on a user guide, documentation, and setting up on PyPI.
+> [!WARNING]
+> This is a pre-release. We are actively working on a user guide, documentation, and setting up on PyPI.
 
 ## Example
 
@@ -51,8 +51,8 @@ You will need PyTorch installed for `iskra` ✨ to work: [see PyTorch installati
 The code has been tested with `torch==2.12`.
 It will likely work with other versions too.
 
-!!! note
-    We do not include PyTorch as a dependency because the package you will install will depend on your exact setup, e.g., whether you have a GPU or not, your GPU driver version, and so on.
+> [!NOTE]
+> We do not include PyTorch as a dependency because the package you will install will depend on your exact setup, e.g., whether you have a GPU or not, your GPU driver version, and so on.
 
 ## Development
 Lastly, if you plan on contributing, you will need the development dependencies and to compile the C++ extensions in editable mode.

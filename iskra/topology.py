@@ -12,24 +12,59 @@ import iskra.sparse as sp
 
 
 def face_to_subface_idcs(face_dim: int, subface_dim: int = -1) -> list[tuple[int, ...]]:
-    """Returns canonical indices of subfaces within faces.
+    r"""Returns canonical indices for subfaces within faces.
 
-    In codimension 1, makes sure triangles/edges are oriented correctly
-    and also makes sure that the `i`th subface is opposite to vertex `i`.
+    When requesting subfaces one dimension lower than the faces
+    (e.g., triangles from tets or edges from triangles), the function
+    ensures that the subfaces are oriented correctly
+    and that the $i^{\text{th}}$ subface is opposite to vertex $i$.
+
+    Tip:
+        A pattern you might need at some point is using this function to get
+        the face-subfaces-vertices tensor:
+
+        .. code-block:: python
+
+            idcs: list[tuple[int, ...]] = face_to_subface_idcs(face_dim, subface_dim)
+            half_subfaces = torch.stack([faces[:, nbh_idx] for nbh_idx in idcs], -2)
+
+        For example using this pattern with `face_dim=2`, `subface_dim=1` would create
+        a `[F, 3, 2]` tensor with the "triangle to half-edge vertices" relationship.
+        Ideally, this should only be necessary in rare occasions.
+
+    Caution:
+        The dimension of a face is one less than the number of vertices in the face,
+        e.g., edges are 1-faces, triangles 2-faces, etc.
 
     Args:
         face_dim (int): Intrinsic dimension of face to be indexed into.
         subface_dim (int): Intrinsic dimension of desired subface.
+            Passing a negative value makes the subface dimension relative to
+            the face dimension: on a k-dimensional mesh, passing `subface_dim=-1`
+            asks for (k-1)-dimensional simplices.
 
     Returns:
         list[tuple[int, ...]]: List of the indices used to get each subface.
+
+    Example:
+        .. csv-table::
+            :header: "Description", "`face_dim`", "`subface_dim`", "`idcs`"
+            :widths: 28, 8, 10, 40
+
+            "tet → triangles (oriented/opposite vertex $i$ convention)", "`3`", "`2` (default)", "`[(1,2,3), (0,3,2), (0,1,3), (0,2,1)]`"
+            "tet → edges (`Heron's formula / opposite edge $i$ <https://en.wikipedia.org/wiki/Heron%27s_formula#Volume_of_a_tetrahedron>`_)", "`3`", "`1`", "`[(0,1), (1,2), (2,0), (2,3), (0,3), (1,3)]`"
+            "triangle → edges (oriented/opposite vertex $i$ convention)", "`2`", "`1` (default)", "`[(1,2), (2,0), (0,1)]`"
+            "triangle → vertices", "`2`", "`0`", "`[(0,), (1,), (2,)]`"
+            "edge → vertices (opposite vertex $i$ convention)", "`1`", "`0` (default)", "`[(1,), (0,)]`"
+            "other dims (fallback)", "`d`", "`k`", "`combinations(range(d+1), k+1)`"
     """
     if subface_dim < 0:
         subface_dim = face_dim + subface_dim
+
     idcs: list[tuple[int, ...]]
     if face_dim == 3 and subface_dim == 2:
         idcs = [(1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)]
-    if face_dim == 3 and subface_dim == 1:
+    elif face_dim == 3 and subface_dim == 1:
         # The edge ordering is s.t. UVW form a triangle,
         # and U is opposite to u, V to v and W to w.
         # U = (0, 1), V = (1, 2), W = (2, 0)
@@ -43,11 +78,35 @@ def face_to_subface_idcs(face_dim: int, subface_dim: int = -1) -> list[tuple[int
     elif face_dim == 1 and subface_dim == 0:
         idcs = [(1,), (0,)]
     else:
-        idcs = list(combinations(range(face_dim + 1), face_dim))
+        idcs = list(combinations(range(face_dim + 1), subface_dim + 1))
     return idcs
 
 
 def simplex_parity(faces: torch.Tensor) -> torch.Tensor:
+    r"""Parity of each simplex's vertex ordering relative to sorted order.
+
+    Treats the vertex indices of each simplex as a permutation of their
+    sorted values and returns the `parity of that permutation
+    <https://en.wikipedia.org/wiki/Parity_of_a_permutation>`_: $0$ if even
+    (same orientation as ascending index order), $1$ if odd (opposite).
+    Implemented by selection-sorting each simplex into ascending vertex
+    order and counting swaps modulo $2$. The number of transpositions is
+    not unique, but its parity is.
+
+    Tip:
+        `get_subfaces()` maps this parity to the orientation signs
+        $\\{+1, -1\\}$ used in the face-subface hierarchy.
+
+    Caution:
+        Vertex indices within each simplex are assumed distinct.
+
+    Args:
+        faces (Tensor[Int64, [Bs, F, FV]]): Face-vertex indices. Any number
+            of leading batch dimensions is allowed.
+
+    Returns:
+        Tensor[Int64, [Bs, F]]: $0$ for even parity, $1$ for odd parity.
+    """
     faces = faces.clone()
     transpositions = torch.zeros_like(faces[..., 0])
     for i in range(faces.shape[-1] - 1):
@@ -66,23 +125,56 @@ def simplex_parity(faces: torch.Tensor) -> torch.Tensor:
 def get_subfaces(
     faces: torch.Tensor, subface_dim: int = -1
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Finds all subsimplices of dimension d in a set of higher-dimensional faces.
+    r"""Finds all `subface_dim`-dimensional subfaces contained in a set of faces.
+
+    The function constructs one level of the face-subface hierarchy via the
+    three tensors connecting faces to subfaces: subface-vertex, face-subface,
+    and subface-orientation.
+    It assigns each subface element a unique index.
+    `subface_vertex[i, 0]` is the index of the first vertex of subface $i$;
+    thus, $i$ is the unique index assigned to the subface with those vertices.
+    `face_subface[j, 0]` is said unique index of the first subface in face $j$.
+    Now, notice that subface $i$ has a canonical orientation assigned to it via
+    the vertex ordering in `subface_vertex`, which may be flipped when the subface
+    appears as a part of face $j$.
+    Therefore, `subface_orientation[j, 0]` tells us whether the subface at
+    `face_subface[j, 0]` is flipped (-1) or not (+1) as it appears in face $j$.
+
+    Hint:
+        The function obtains the list of unique subfaces by getting all of
+        the half-subface vertices via `face_to_subface_idcs()`, sorting the
+        vertex indices and then picking out the unique ones.
+        It finds the orientation using `simplex_parity()`.
+
+    Tip:
+        This function is one of the three building blocks of `iskra`'s
+        scatter-gather framework, together with `iskra.topology.reduce_on_subface()`
+        which performs the scatter-reduce operation and `iskra.topology.face_index()`,
+        which performs the gather operation.
+
+        This function constructs the face hierarchy.
+
+        See :doc:`/guide/scatter-gather` for an explanation of `iskra`'s
+        tensor-based scatter-gather framework.
+
+    Caution:
+        The dimension of a face is one less than the number of vertices in the face,
+        e.g., edges are 1-faces, triangles 2-faces, etc.
 
     Args:
-        faces (Tensor[n_faces, face_dim]): Face-to-vertex indices of higher-dim faces.
-        subface_dim (int): The dimension of the requested subface. Note that the face
-            dimension is one less than the number of its vertices, e.g. edges are
-            1-faces, triangles 2-faces, etc.
+        faces (Tensor[Int64, [F, FV]]): Face-vertex indices.
+        subface_dim (int): The dimension of the requested subfaces.
+            Passing a negative value makes the subface dimension relative to
+            the face dimension: on a k-dimensional mesh, passing `subface_dim=-1`
+            asks for (k-1)-dimensional simplices.
 
     Returns:
-        Tensor[n_subfaces, subface_dim]: Subface-vertex indices.
-
-        Tensor[n_faces, n_subfaces_per_face]: Face-subface indices.
-
-        Tensor[n_faces, n_subfaces_per_face]: Sign (-1 or +1) signaling a subface in the
-            face-subface indices is flipped _with regards to its canonical orientation_
+        subface_vertex (Tensor[Int64, [S, SV]]): Subface-vertex indices.
+        face_subface (Tensor[Int64, [F, FS]]): Face-subface indices.
+        subface_orientation (Tensor[Float, [F, FS]]): Sign (-1 or +1) signaling a subface in the
+            face-subface indices is flipped *with regards to its canonical orientation*
             as dictated by the subface-vertex indices. The sign for vertex subfaces is
-            _always_ +1, as they can only have one canonical orientation.
+            *always* +1, as they can only have one canonical orientation.
             This is a different notion of orientation from DEC's `d_{0, 1}` operator.
     """
     if faces.ndim != 2:
@@ -101,9 +193,8 @@ def get_subfaces(
         n_subfaces = 1
     else:
         idcs: list[tuple[int, ...]] = face_to_subface_idcs(face_dim, subface_dim)
+        subfaces = torch.stack([faces[:, nbh_idx] for nbh_idx in idcs], -2)
         n_subfaces = len(idcs)
-        subsimplex_list = [faces[:, nbh_idx] for nbh_idx in idcs]
-        subfaces = torch.stack(subsimplex_list, -2)
 
     # Is simplex pairity really what we want here?
     if face_dim == 1:  # whyyyyyyyy is this necessary?!?!?!?!!?
@@ -125,15 +216,19 @@ def get_subfaces(
 def edge_flaps(faces: torch.Tensor) -> torch.Tensor:
     """Returns a tensor denoting the right and left faces of an edge.
 
+    Computes a tensor `flaps`, such that `flaps[i, 0]` is the index of the left face
+    and `edge_flaps[i, 1]` the index of the right face containing edge $i$.
+    If an edge is a boundary edge and only has a triangle on one of its sides,
+    the other side will be equal to -1.
+
+    Caution:
+        Assumes a manifold mesh.
+
     Args:
-        faces (torch.Tensor): An `[F, 3]` tensor with triangle faces.
+        faces (Tensor[Int64, [F, 3]]): Triangle faces.
 
     Returns:
-        torch.Tensor: An `[E, 2]` tensor, where E is the number of
-            unique edges in the mesh. `edge_flaps[:, 0]` is the index of the left face
-            and `edge_flaps[:, 1]` the index of the right face of the mesh. If an edge
-            is a boundary edge and only has a triangle on one of its sides,
-            the other side will be equal to -1.
+        flaps (Tensor[Int64, [E, 2]]): The edge flaps tensor.
     """
     device = faces.device
 
@@ -162,12 +257,30 @@ def edge_flaps(faces: torch.Tensor) -> torch.Tensor:
 
 def assemble_incidence_matrix(
     n_faces: int,
-    face_dim: int,
     n_subfaces: int,
     face_to_subface: torch.Tensor,
     subface_sign: torch.Tensor,
     signed: bool = False,
-) -> torch.Tensor:
+) -> sp.SparseTensor:
+    """Assembles face-subface relationships into a matrix.
+
+    Returns a sparse `[F, S]` matrix where a non-zero entry at $(i, j)$ indicates
+    that face $i$ contains subface $j$. The entry is $1$ if `signed=False` and is
+    equal to the orientation of the subface $j$ as seen from face $i$
+    (see `get_faces()`) if `signed=True`.
+    The inputs needed for this function usually come from `get_subfaces()`, or you
+    can use the high-level wrapper `incidence_matrix()`.
+
+    Args:
+        n_faces (int): Number of faces (`F`).
+        n_subfaces (int): Number of subfaces (`S`).
+        face_to_subface (Tensor[Int64, [F, FS]]): Face-subface matrix.
+        subface_sign (Tensor[Float, [F, FS]]): Subface orientation matrix.
+        signed (bool): Whether the matrix should be signed or not. Defaults to False.
+
+    Returns:
+        SparseTensor[Float, [F, S]]: Incidence matrix.
+    """
     device = face_to_subface.device
     n_subfaces_per_face = face_to_subface.shape[-1]
     i = torch.cat(n_subfaces_per_face * [torch.arange(n_faces, device=device)])
@@ -182,13 +295,38 @@ def assemble_incidence_matrix(
 
 def incidence_matrix(
     faces: torch.Tensor, subface_dim: int = -1, signed: bool = False
-) -> torch.Tensor:
-    n_faces, face_dim = faces.shape[0], faces.shape[-1] - 1
+) -> sp.SparseTensor:
+    """Constructs the face-subface incidence matrix.
 
+    This function is a high-level wrapper that calls `get_subfaces()` and passes
+    the outputs to `assemble_incidence_matrix()`.
+    Returns a sparse `[F, S]` matrix where a non-zero entry at $(i, j)$ indicates
+    that face $i$ contains subface $j$. The entry is $1$ if `signed=False` and is
+    equal to the orientation of the subface $j$ as seen from face $i$
+    (see `get_faces()`) if `signed=True`.
+
+    Caution:
+        The dimension of a face is one less than the number of vertices in the face,
+        e.g., edges are 1-faces, triangles 2-faces, etc.
+
+    See Also:
+        `iskra.topology.assemble_incidence_matrix()`, `iskra.topology.get_subfaces()`.
+        Also used in `iskra.dec.d_01()`, `iskra.dec.d_12()`, etc.
+
+    Args:
+        faces (Tensor[Int64, [F, 3]]): Face index.
+        subface_dim (int): The dimension of the requested subfaces.
+            Passing a negative value makes the subface dimension relative to
+            the face dimension: on a k-dimensional mesh, passing `subface_dim=-1`
+            asks for (k-1)-dimensional simplices.
+        signed (bool): Whether the matrix should be signed or not.
+
+    Returns:
+        SparseTensor[Float, [F, S]]: Incidence matrix.
+    """
     subfaces, face_to_subface, subface_sign = get_subfaces(faces, subface_dim)
     return assemble_incidence_matrix(
-        n_faces,
-        face_dim,
+        faces.shape[0],
         subfaces.shape[0],
         face_to_subface,
         subface_sign,
@@ -196,48 +334,54 @@ def incidence_matrix(
     )
 
 
-def vertex_adjacency(faces: torch.Tensor) -> torch.Tensor:
+def get_vert_vert(faces: torch.Tensor) -> torch.Tensor:
     """Vertex-vertex adjacencies.
 
-    !!! tip
+    The function returns vertex-to-vertex adjacency pairs $(i, j)$ and
+    ensures both $(i, j)$ and $(j, i)$ are included.
+    This function can be helpful when we want to perform operations
+    over vertex one-rings.
 
-        The faces argument can be an arbitrary simplex. Tets, triangles, and edges all work.
+    Tip:
+        The faces can be of arbitrary dimension. Tets, triangles, and edges all work.
 
     Args:
-        faces (torch.Tensor): Tensor  representing the mesh topology with shape `[n_faces, n_face_corners]`,
-            where `n_faces` is the number of faces and `n_face_corners` is the number of simplex corners,.
+        faces (Tensor[Int64, [F, FV]]): Face-vertex indices.
 
     Returns:
-        torch.Tensor: A dense tensor of shape `[2 * E, 2]`,
-        where E is the number of edges.
+        Tensor[Int64, [2 * E, 2]]: Vertex-to-vertex adjacencies.
     """
     edges, _, _ = get_subfaces(faces, subface_dim=1)
     idx = torch.cat([edges, edges.flip(-1)], -2)
     return idx
 
 
-def edge_to_vertex_adjacency(values: torch.Tensor) -> torch.Tensor:
-    """Moves scalar edge data to be vertex-vertex data.
+def scatter_edge_to_vert_vert(values: torch.Tensor) -> torch.Tensor:
+    """Scatters scalar edge data to vertex-vertex data.
 
-    Simply duplicates scalar edge data so it becomes scalar vert-vert data:
-    ```
-    return torch.cat([values, values], -1)
-    ```
+    Under the hood, this simply duplicates scalar edge data
+    so it becomes scalar vert-vert data:
+
+    .. code-block:: python
+
+        return torch.cat([values, values], -1)
+
+    See Also:
+        `iskra.topology.get_vert_vert()`.
 
     Args:
-        values (Tensor[Bs, E]): Scalar per-edge data.
+        values (Tensor[DType, [Bs, E]]): Scalar per-edge data.
 
     Returns:
-        Tensor[Bs, 2E]: Duplicated edge data.
+        Tensor[DType, [Bs, 2E]]: Duplicated edge data.
     """
     return torch.cat([values, values], -1)
 
 
-def vertex_adjacency_matrix(n_vertices: int, faces: torch.Tensor) -> torch.Tensor:
+def vertex_adjacency_matrix(n_vertices: int, faces: torch.Tensor) -> sp.SparseTensor:
     """*Undirected* vertex-vertex adjacency matrix.
 
-    !!! tip
-
+    Tip:
         The faces argument can be an arbitrary simplex. Tets, triangles, and edges all work.
 
     Args:
@@ -246,7 +390,7 @@ def vertex_adjacency_matrix(n_vertices: int, faces: torch.Tensor) -> torch.Tenso
             where `n_faces` is the number of faces and `n_face_corners` is the number of simplex corners,.
 
     Returns:
-        torch.Tensor: A sparse COO tensor of shape `[n_vertices, n_vertices]`.
+        SparseTensor[Float, []]: A sparse COO tensor of shape `[n_vertices, n_vertices]`.
             An entry is 1 if two vertices share an edge.
     """
     edges, _, _ = get_subfaces(faces, subface_dim=1)
@@ -256,11 +400,32 @@ def vertex_adjacency_matrix(n_vertices: int, faces: torch.Tensor) -> torch.Tenso
 
 
 def boundary(faces: torch.Tensor) -> torch.Tensor:
+    """Finds all boundary subfaces of a mesh.
+
+    Boundary subfaces are defined as those that appear in one face only.
+    A boundary subface inherits the orientation from their parent face
+    (see `face_subface_idcs()` for more information on the subface vertex ordering).
+
+    Tip:
+        The faces can be of arbitrary dimension. Tets, triangles, and edges all work.
+
+    See Also:
+        `iskra.topology.ordered_boundary_vertices()`,
+        `iskra.topology.ordered_boundary_edges()`,
+        `iskra.topology.face_subface_idcs()`.
+
+    Args:
+        faces (Tensor[Int64, [F, FV]]): Face-vertex indices.
+
+    Returns:
+        Tensor[Int64, [BS, SV]]: Boundary subface-vertex indices, one row per
+            boundary subface. `SV` is one less than `FV`.
+    """
     idcs: list[tuple[int, ...]] = face_to_subface_idcs(faces.shape[-1] - 1)
     half_faces = torch.cat([faces[:, idx] for idx in idcs], 0)
-    sorted_edges, _ = torch.sort(half_faces, dim=-1)
+    sorted_half_faces, _ = torch.sort(half_faces, dim=-1)
     _, unique_idcs, counts = torch.unique(
-        sorted_edges, dim=0, return_inverse=True, return_counts=True
+        sorted_half_faces, dim=0, return_inverse=True, return_counts=True
     )
     inverse_counts = counts[unique_idcs]
     return half_faces[inverse_counts == 1, :]
@@ -271,21 +436,22 @@ def connected_components(
 ) -> tuple[int, torch.Tensor, torch.Tensor]:
     """Finds the connected components of a mesh.
 
-    !!! tip
+    Tip:
+        The faces can be of arbitrary dimension. Tets, triangles, and edges all work.
 
-        The faces argument can be an arbitrary simplex. Tets, triangles, and edges all work.
+    Warning:
+        This function is executed on the CPU.
 
     Args:
         n_vertices (int): Number of vertices in your mesh.
-        faces (torch.Tensor): Tensor  representing the mesh topology with shape `[n_faces, n_face_corners]`,
-            where `n_faces` is the number of faces and `n_face_corners` is the number of simplex corners,.
+        faces (Tensor[Int64, [F, FV]]): Face-vertex indices.
 
     Returns:
         n_components (int): Number of connected components in the mesh.
-        vertex_labels (torch.Tensor): A tensor of shape `[n_vertices]`
-            with integer labels signifying the connected component of each vertex.
-        face_labels (torch.Tensor): A tensor of shape `[n_faces]`
-            with integer labels signifying the connected component of each face.
+        vertex_labels (Tensor[Int64, [V]]): Integer labels signifying
+            the connected component of each vertex.
+        face_labels (Tensor[Int64, [F]]): Integer labels signifying
+            the connected component of each face.
     """
     device = faces.device
     adjacency = vertex_adjacency_matrix(n_vertices, faces)
@@ -299,19 +465,30 @@ def connected_components(
     return n_comp, labels, face_labels
 
 
-def select_linked(start_vertex: int, faces: torch.Tensor) -> torch.Tensor:
-    raise NotImplementedError
-
-
-def loose_vertices(n_vertices: int, faces: torch.Tensor) -> torch.Tensor:
-    raise NotImplementedError
-
-
-def flip_edges() -> torch.Tensor:
-    raise NotImplementedError
-
-
 def ordered_boundary_edges(edges: torch.Tensor) -> list[torch.Tensor]:
+    """Orders boundary edges into contiguous loops.
+
+    Given a set of undirected edges (typically the output of `boundary()`),
+    finds each connected component of the edge graph and returns the edges
+    of that component in a depth-first traversal order. Each component
+    therefore forms a contiguous walk along a boundary loop.
+
+    Warning:
+        This function is executed on the CPU.
+
+    See Also:
+        `iskra.topology.ordered_boundary_vertices()`,
+        `iskra.topology.boundary()`
+
+    Args:
+        edges (Tensor[Int64, [E, 2]]): Edge-vertex indices, e.g. boundary
+            edges from `boundary()`.
+
+    Returns:
+        list[Tensor[Int64, [Ec, 2]]]: One tensor of ordered edges per
+            connected component of the edge graph. `Ec` is the number of
+            edges in that component. Components with no edges are omitted.
+    """
     device = edges.device
     max_vertex = -1
     if edges.numel() > 0:
@@ -338,51 +515,88 @@ def ordered_boundary_edges(edges: torch.Tensor) -> list[torch.Tensor]:
     return component_edges
 
 
-def face_index(
-    values: torch.Tensor, faces: torch.Tensor, squeeze: bool = True
-) -> torch.Tensor:
-    """Scatters vertex values according to a tensor of vertex indices.
+def ordered_boundary_vertices(edges: torch.Tensor) -> list[torch.Tensor]:
+    """Orders boundary vertices into contiguous loops.
 
-    This function takes in a function value associated with each vertex
-    and a high-dimensional tensor of vertex indices, and outputs a tensor
-    that contains those function values in positions defined by the index.
+    Thin wrapper around `ordered_boundary_edges()`: for each connected
+    component of the edge graph, returns the ordered sequence of vertex
+    indices along that walk. Assumes that the edges belong to the boundary
+    of a 2-manifold mesh.
 
-    !!! example
+    Warning:
+        This function is executed on the CPU.
 
-        Some concrete examples are:
-
-        - Scattering 2D triangle positions:
-            - input tensor shapes: `[n_vertices, 2]`, `[n_triangles, 3]`
-            - output tensor shape: `[n_triangles x 3 x 2]`.
-        - Scattering 3D triangle positions:
-            - input tensor shapes: `[n_vertices, 3]`, `[n_triangles, 3]`
-            - output tensor shape: `[n_triangles x 3 x 3]`.
-        - Scattering 3D tet positions:
-            - input tensor shapes: `[n_vertices, 3]`, `[n_tets, 4]`
-            - output tensor shape: `[n_triangles x 4 x 3]`.
-        - Scattering 4D tet positions:
-            - input tensor shapes: `[n_vertices, 4]`, `[n_tets, 4]`
-            - output tensor shape: `[n_triangles x 4 x 4]`.
-        Works with higher dimensional indices too.
+    See Also:
+        `iskra.topology.ordered_boundary_edges()`,
+        `iskra.topology.boundary()`
 
     Args:
-        values: A tensor of shape [n_vertices, value_dim] assigning a
-            value_dim-dimensional value to each vertex.
-        faces: A tensor of shape [n_faces, intrinsic_dim + 1] containing
-            the n_faces faces each with dim + 1 vertices.
-        squeeze: If intrinsic_dim == 0 (i.e. the list of faces is just
-            a 1D list of vertices) squeeze dictates whether the output
-            will have the size-1 dimension corresponding to the face vertices
-            squeezed. Default: True.
+        edges (Tensor[Int64, [E, 2]]): Edge-vertex indices, e.g. boundary
+            edges from `boundary()`.
 
     Returns:
-        An Tensor with the shape [n_simplices, intrinsic_dim + 1, value_dim].
+        list[Tensor[Int64, [Vc]]]: One tensor of ordered vertex indices
+            per connected component where `Vc` is the number of boundary
+            vertices of that component.
+    """
+    component_edges = ordered_boundary_edges(edges)
+    return [ordered_edges[:, 0] for ordered_edges in component_edges]
+
+
+def face_index(
+    data: torch.Tensor, faces: torch.Tensor, squeeze: bool = True
+) -> torch.Tensor:
+    """Gathers subface values onto the faces that contain them.
+
+    This function collects, i.e., gathers, data (scalar, vector, tensor, etc.)
+    defined on subfaces onto the faces they belong to. So, e.g., triangle faces
+    can gather 3 edge-based values or 3 vertex-based values onto themselves.
+    Alternatively, one can see this function as using the subface indices
+    stored in `faces` to index into `data`: given data associated with each
+    subface and a tensor of subface indices, this function outputs a tensor
+    that contains data entries in positions defined by the indices.
+
+    Tip:
+        This function is one of the three building blocks of `iskra`'s
+        scatter-gather framework, together with `iskra.topology.get_subfaces()`
+        which constructs the face hierarchy and
+        `iskra.topology.reduce_on_subface()`, which performs the
+        scatter-reduce operation.
+
+        This function moves data up the face hierarchy.
+
+        See :doc:`/guide/scatter-gather` for an explanation of `iskra`'s
+        tensor-based scatter-gather framework.
+
+    Args:
+        data (Tensor[DType, [S, Ds]]): Data with shape `[Ds]` stored on each
+            subface.
+        faces (Tensor[Int64, [F, FS]]): Face-to-subface indices.
+        squeeze: If `FS` == 0 (i.e. the list of faces is just
+            a 1D list of vertices) `squeeze` dictates whether the output
+            will have the size-1 dimension corresponding to the face vertices
+            squeezed. Default: `True`.
+
+    Returns:
+        An Tensor with the shape `[F, Ds]`.
+
+    Example:
+        .. csv-table::
+            :header: "`values.shape`", "`faces.shape`", "`result.shape`", "Gathering"
+            :widths: 12, 12, 14, 30
+
+            "`[V, 2]`", "`[Tris, 3]`", "`[Tris, 3, 2]`", "2D triangle positions"
+            "`[V, 3]`", "`[Tris, 3]`", "`[Tris, 3, 3]`", "3D triangle positions"
+            "`[V, 3]`", "`[Tets, 4]`", "`[Tets, 4, 3]`", "3D tet positions"
+            "`[V, 4]`", "`[Tets, 4]`", "`[Tets, 4, 4]`", "4D tet positions"
+
+        This works with higher dimensional indices too.
     """
     if faces.ndim == 1:
         faces = faces[:, None]
 
-    result_shape = faces.shape + values.shape[1:]
-    result = values[faces.flatten(), ...].reshape(result_shape)
+    result_shape = faces.shape + data.shape[1:]
+    result = data[faces.flatten(), ...].reshape(result_shape)
     if squeeze and faces.shape[-1] == 1:
         result = result.squeeze(faces.ndim - 1)
 
@@ -397,49 +611,86 @@ def reduce_on_subface(
     data_ndim: int | None = None,
     batch_ndim: int = 0,
 ) -> torch.Tensor:
-    """Reduces data from faces onto constitutive subfaces.
+    """Scatter-reduce data from faces onto constitutive subfaces.
 
-    !!! note
-        This function slices up the data into three parts: `[Bs, Fs, Ds]`,
-        where `Bs` are the batch dimensions, `Ds` are the per-face/per-corner data
-        payload dimensions; `Fs` are the face dimensions which tell us where the data
-        is defined on.
+    This function distributes, i.e., scatters, data (scalar, vector, tensor,
+    etc.) defined on faces to each face's subfaces.
+    A naive scatter would result in each subface receiving multiple competing
+    values, one for each face that contains it. Therefore, each operation is
+    actually a scatter-reduce (see `reduce` argument).
+    So, e.g., a triangle face can scatter its value to its 3 edges. That value
+    is then, e.g., averaged onto each edge with the values of
+    the other triangles that share that same edge.
 
-        So, if on a triangle mesh `Fs` are equal to `[F]`, we have one data payload
-        per face, whereas `[F, 3]` implies one data payload per triange-corner.
+    The function slices up the data tensor into three parts: `[Bs, Fs, Ds]`,
+    where `Bs` is the batch shape, `Ds` are the data payload dimensions;
+    `Fs` represents the "domain" of the data.
+    Most commonly `Fs` is either `[F]` or `[F, FS]`.
+    For example, on a triangle mesh, `Fs = [F]` implies one data payload
+    per triangle, whereas `Fs = [F, 3]` implies one data payload per
+    triangle-corner or triangle-side.
 
-        Data dimensions are assumed to be greedy under the default parameters: we assume
-        `Fs` are `[F]` and that everything to the right of `Fs` is the data payload.
+    Data dimensions are greedy when `data_ndim` is `None`: we assume
+    `Fs = [F]` and that everything to the right of `Fs` is the data payload.
+    E.g., if `data.shape = [B, F, 3, 3]` and `Fs = [F]`, we have one data
+    payload per face, whereas if `Fs = [F, 3]`, we have one data payload per
+    triangle-corner.
 
+    Caution:
+        The function should generalize to nested subfaces indices, i.e.,
+        `Fs=[F, FSs]`. For example, it should handle data defined on a
+        tetrahedron's side-triangles' corners (`Fs=[Tets, 3, 3]`), but
+        this is untested! If you have a real-world example of data stored
+        on subfaces of subfaces, let me know and I can look into it!
 
-    !!! example
+    Tip:
+        This function is one of the three building blocks of `iskra`'s
+        scatter-gather framework, together with `iskra.topology.get_subfaces()`
+        which constructs the face hierarchy and `iskra.topology.face_index()`,
+        which performs the gather operation.
 
-        Some concrete examples are:
+        This function moves data down the face hierarchy.
 
-        | `data.shape` | `faces.shape` | `data_ndim` | `result.shape` | Example |
-        | ------------- | ------------- | ----------- | -------------- | ------- |
-        | `[B, F]`       | `[B, F, 3]`     | `0`           | `[B, V]`         | averaging corner scalars on vertices |
-        | `[B, F, 3]`    | `[B, F, 3]`     | `0`           | `[B, V]`         | averaging corner scalars on vertices |
-        | `[B, F, 3]`    | `[B, F, 3]`     | `1` or `None`   | `[B, V, 3]`      | averaging face normals on vertices |
-        | `[B, F, 3, 3]` | `[B, F, 3]`     | `1`           | `[B, V, 3]`      | averaging corner normals on vertices |
-        | `[B, F, 3, 3]` | `[B, F, 3]`     | `2` or `None`   | `[B, V, 3, 3]`   | averaging face covariances on vertices |
+        See :doc:`/guide/scatter-gather` for an explanation of `iskra`'s
+        tensor-based scatter-gather framework.
 
     Args:
-        data (Tensor[DType, [Bs, F, FSs, Ds]]): Data defined on mesh faces or corners.
-        faces (Tensor[Int64, [Bs, F, FSs]]): Face indices.
-        n_subfaces (int): Total number of subfaces in the mesh.
-        reduce (Literal["sum", "prod", "mean", "amax", "amin"]): Reduction operation.
-        data_ndim (int | None): Num. dimensions of the per-face (or per-corner) payload.
+        data (Tensor[DType, [Bs, Fs, Ds]]): Data defined on mesh faces
+            (`Fs=[F]`) or face-subfaces (`Fs=[F, FS]`).
+        faces (Tensor[Int64, [Bs, F, FS]]): Face-subface indices.
+        n_subfaces (int): Total number of subfaces in the mesh (e.g., total
+            number of vertices or edges in a triangle mesh).
+        reduce (Literal["sum", "prod", "mean", "amax", "amin"]): Reduction
+            operation, see `torch.scatter_reduce()` for more details.
+        data_ndim (int | None): Num. dimensions of the per-face
+            (or per-face-subface) payload. See above for more details
+            on default behavior.
         batch_ndim (int): Num. batch dimensions.
 
     Returns:
-        Tensor[DType, [Bs, S, Ds]]: Normal vectors of each triangle.
+        Tensor[DType, [Bs, S, Ds]]: Data reduced onto the `S` subfaces,
+        where `S` equals the value of the argument `n_subfaces`.
+
+    Example:
+        .. csv-table::
+            :header: "`data.shape`", "`faces.shape`", "`data_ndim`", "`result.shape`", "Example: from → to"
+            :widths: 14, 5, 5, 14, 30
+
+            "`[B, F]`", "`[B, F, 3]`", "`0`", "`[B, V]`", "face scalars → vertices"
+            "`[B, F, 3]`", "`[B, F, 3]`", "`0`", "`[B, V]`", "corner scalars → vertices"
+            "`[B, F, 2]`", "`[B, F, 3]`", "`1` | `None`", "`[B, V, 2]`", "face 2-vectors → vertices"
+            "`[B, F, 3, 2]`", "`[B, F, 3]`", "`1`", "`[B, V, 2]`", "corner 2-vectors → vertices"
+            "`[B, F, 3]`", "`[B, F, 3]`", "`1` | `None`", "`[B, V, 3]`", "face normals → vertices"
+            "`[B, F, 3, 3]`", "`[B, F, 3]`", "`1`", "`[B, V, 3]`", "corner normals → vertices"
+            "`[B, F, 3, 3]`", "`[B, F, 3]`", "`2` | `None`", "`[B, V, 3, 3]`", "face covariances → vertices"
     """
     # Data dims is assumed to be greedy by default, i.e.,
     # we assume everything that is to the right of the face index is part
     # of the data payload.
     if data_ndim is None:
         data_ndim = data.ndim - 1 - batch_ndim
+    assert data_ndim is not None  # for type checking
+
     flatten_scalar_dim = False
     if data_ndim == 0:
         flatten_scalar_dim = True
@@ -485,8 +736,7 @@ def find_cliques(edges: torch.Tensor, max_d: int) -> list[torch.Tensor]:
     Taken from https://stackoverflow.com/questions/48081912/converting-adjacency-matrix-to-abstract-simplicial-complex.
 
     Args:
-        edges (torch.Tensor): A tensor of shape [n_edges, 2] containing
-            the vertex indices that make each edge.
+        edges (Tensor[Int64, [E, 2]]): Edge-vertex indices.
         max_d (int, optional): The number of vertices in the largest
             requested simplex. E.g. max_d=4 will return all possible
             simplices up to and including tetrahedra.

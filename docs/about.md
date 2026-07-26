@@ -1,3 +1,0 @@
-# About `iskra ✨`
-
-- Blah blah

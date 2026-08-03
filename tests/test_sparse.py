@@ -148,3 +148,41 @@ def test_indexing():
 
     print(a[(True, False, True, False), (True, False, True, False)].to_dense())
     print(a_dense[(True, False, True, False), (True, False, True, False)])
+
+
+def test_backward():
+    a_idx = torch.tensor([[0, 1, 1, 2, 3], [0, 1, 0, 2, 3]])
+    expected_grad = torch.tensor([4.0, 6.0, 12.0, 8.0, 10.0])
+
+    # Test base use-case:
+    a_val = torch.tensor([2.0, 3.0, 6.0, 4.0, 5.0], requires_grad=True)
+    a = sp.coo_tensor(a_idx, a_val, size=(4, 4)).coalesce()
+    loss = a.square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert not a.is_leaf
+    assert a_val.grad is not None
+    assert_equal(a_val.grad, expected_grad)
+
+    # Test with `.values()` call:
+    a_val = torch.tensor([2.0, 3.0, 6.0, 4.0, 5.0], requires_grad=True)
+    a = sp.coo_tensor(a_idx, a_val, size=(4, 4)).coalesce()
+    loss = a.values().square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert not a.is_leaf
+    assert a_val.grad is not None
+    assert_equal(a_val.grad, expected_grad)
+
+    # Test with `sp.alias()` call:
+    a_val = torch.tensor([2.0, 3.0, 6.0, 4.0, 5.0], requires_grad=True)
+    a = sp.coo_tensor(a_idx, a_val, size=(4, 4)).coalesce()
+    loss = sp.alias(a).square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert not a.is_leaf
+    assert a_val.grad is not None
+    assert_equal(a_val.grad, expected_grad)

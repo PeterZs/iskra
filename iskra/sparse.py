@@ -88,11 +88,127 @@ def unravel_index(
     return torch.stack(tuple(reversed(idx)))
 
 
-class SparseTensor(torch.Tensor):
-    """Sane sparse PyTorch Tensor.
+def is_sparse_any(x: torch.Tensor) -> bool:
+    """Checks if tensor is either in sparse COO or CSR format.
 
-    Builds upon and extends existing PyTorch sparse tensors,
-    and offers a sane interface and sane defaults.
+    Args:
+        x (torch.Tensor): Tensor to check.
+
+    Returns:
+        bool: Whether tensor is sparse or not.
+    """
+    return x.is_sparse or x.is_sparse_csr
+
+
+def alias[T: torch.Tensor](x: T) -> T:
+    """Creates an alias (view) of a tensor. Works on sparse tensors, unlike PyTorch's.
+
+    The C++ function `alias()` is not implemented for sparse tensors, but we can simply
+    implement a version of it from Python.
+    This is useful for creating subclasses of `torch.Tensor` that have
+    sparse storage; see `SparseTensor` implementation details.
+
+    Warning:
+        This function coalesces sparse COO tensors.
+
+    Args:
+        x (torch.Tensor): Tensor to alias.
+
+    Returns:
+        torch.Tensor: Alias to x.
+    """
+    if x.is_sparse:
+        x = x.coalesce()
+        return torch.sparse_coo_tensor(
+            x.indices(),
+            x.values(),
+            x.shape,
+            dtype=x.dtype,
+            device=x.device,
+            is_coalesced=x.is_coalesced(),
+        )
+    elif x.is_sparse_csr:
+        return torch.sparse_csr_tensor(
+            x.crow_indices(),
+            x.col_indices(),
+            x.values(),
+            x.shape,
+            dtype=x.dtype,
+            device=x.device,
+            check_invariants=False,
+        )
+    else:
+        return x.view_as(x)
+
+
+def _make_sparse_subclass(x: torch.Tensor) -> "SparseTensor":
+    x = alias(x)
+    x.__class__ = SparseTensor
+    return x
+
+
+class SparseTensor(torch.Tensor):
+    """Sane PyTorch sparse tensor.
+
+    A subclass of `torch.Tensor` with a sparse layout, either `torch.sparse_coo` or
+    `torch.sparse_csr`.
+    Unlike the default PyTorch sparse tensors, it offers many quality-of-life utilities
+    which make working with sparse tensors a bareable experience in PyTorch, such as
+    scalar/vector/matrix multiplications which just work and ensure your gradients
+    remain sparse (which is somehow not the default in PyTorch), indexing, slicing,
+    as well as small helpers here and there to patch missing functionality.
+
+    Warning:
+        Constructing `SparseTensor` with COO values will automaticall call `coalesce()`
+        for you, as this is required for `alias()` to work.
+
+    Note:
+        `SparseTensor` is not necessary to use the free-standing functions in this
+        module. You should be able to use most free-standing functions with a normal
+        tensor created via `torch.sparse_coo_tensor`. You should be careful with things
+        like multiplications in that case (`@` will create dense gradients even if the
+        operands are both sparse matrices).
+
+    Important:
+        You almost always want to use `sp.coo_tensor()` or `sp.csr_tensor()` to
+        construct a `SparseTensor` object.
+
+    Builds upon and extends existing PyTorch sparse tensors, and offers a (somewhat)
+    sane interface and defaults.
+
+    .. admonition:: Implementation Details
+
+        Alright, I've spent a bunch of time digging through PyTorch's subclassing mess,
+        so I am sharing what I learned here, hoping it is useful in the future.
+        So, our goal is to create a subclass of `torch.Tensor` which has sparse storage
+        under the hood (i.e., `torch.layout == torch.sparse_coo` or
+        `torch.layout == torch.sparse_csr`).
+
+        PyTorch's `_make_subclass()` is not what we need because it terminates autograd
+        history, meaning, e.g., it won't propagate gradients to the values of a COO
+        tensor if the values are autograd leafs. In essence, `_make_subclass()` makes
+        a new leaf tensor with the same data as the input. This is not what we want!
+
+        PyTorch's `as_subclass()` should be the fix, but fails on sparse tensors.
+        Under the hood, it does a couple of things, see https://github.com/pytorch/pytorch/blob/ece45c392cb3ed8a958fbaea8eaf0fe5d812da6d/torch/csrc/autograd/python_variable.cpp#L610-L633
+        First, it creates a view into the tensor, thus sharing memory but having a
+        new tensor object. Second, it sets `__class__` to equal the subclass class.
+        Lastly, it enables `__torch_dispatch__` on the subclass via
+        `set_python_dispatch()`, but only if the subclass has a custom
+        `__torch_dispatch__` defined.
+
+        Sadly, the PyTorch does not implement aliasing for sparse tensors, but we can
+        simply implement a Python alternative; see `alias()`. Likewiese, we set
+        `tensor.__class__ = SparseTensor` manually from Python.
+        The only thing we cannot do from Python is `__torch_dispatch__`. However,
+        `__torch_dispatch__` is only needed if you wish to override low-level tensor
+        behavior, such as behavior during autograd or CUDA kernel calls.
+        In **our specific scenario**, we are not overriding `__torch_dispatch__`, so we
+        do not really need to worry about `set_python_dispatch()`.
+        However, if we were, we would probably need to do somehting akin to this:
+        https://github.com/albanD/subclass_zoo/blob/ec47458346c2a1cfcd5e676926a4bbc6709ff62e/negative_tensor.py
+        This implementation seems to be more complex, so we will only migrate when
+        this is absolutely necessary.
     """
 
     def __new__(
@@ -111,14 +227,12 @@ class SparseTensor(torch.Tensor):
                 "To construct from raw indices, use SparseTensor.from_coo() "
                 "or SparseTensor.from_csr()."
             )
-        if not tensor.is_sparse:
+        if not is_sparse_any(tensor):
             raise TypeError(
                 "SparseTensor does not accept dense tensors. "
                 "Use SparseTensor.from_coo() or SparseTensor.from_csr() to "
                 "construct from raw data, or convert first with .to_sparse()."
             )
-        if isinstance(tensor, SparseTensor):
-            tensor = tensor._tensor
         if dtype is not None:
             tensor = tensor.to(dtype)
         if device is not None:
@@ -129,9 +243,10 @@ class SparseTensor(torch.Tensor):
         elif layout == "coo" and tensor.layout == torch.sparse_csr:
             tensor = tensor.to_sparse_coo()
 
-        wrapper = torch.Tensor._make_subclass(cls, tensor, tensor.requires_grad)
-        wrapper._tensor = tensor
-        return wrapper
+        tensor = _make_sparse_subclass(tensor)
+        if requires_grad:
+            tensor.requires_grad_(requires_grad)
+        return tensor
 
     @classmethod
     def from_coo(
@@ -237,8 +352,8 @@ class SparseTensor(torch.Tensor):
             a, b = args
             with torch._C.DisableTorchFunctionSubclass():
                 ret = matmul(a, b)
-                if a.is_sparse and b.is_sparse:
-                    return torch.Tensor._make_subclass(cls, ret, ret.requires_grad)
+                if is_sparse_any(a) and is_sparse_any(b):
+                    return _make_sparse_subclass(ret)
                 else:
                     return ret
         elif func in mul_funcs:
@@ -257,9 +372,7 @@ class SparseTensor(torch.Tensor):
             and not isinstance(ret, cls)
             and func not in dense_funcs
         ):
-            ret_sparse = torch.Tensor._make_subclass(cls, ret, ret.requires_grad)
-            ret_sparse._tensor = ret
-            ret = ret_sparse
+            ret = _make_sparse_subclass(ret)
         return ret
 
     def __matmul__(
@@ -295,7 +408,9 @@ class SparseTensor(torch.Tensor):
         return to_scipy(self)
 
     def torch_tensor(self) -> torch.Tensor:
-        return self._tensor
+        result: SparseTensor = alias(self)
+        result.__class__ = torch.Tensor
+        return result
 
     def __getitem__(self, index):
         if isinstance(index, tuple):
@@ -304,7 +419,7 @@ class SparseTensor(torch.Tensor):
             return get_slice(self, index)
 
     def __setitem__(self, index, value):
-        # Enforce lowercase keys and protect data types
+        raise NotImplementedError("Setting sparse tensor elements not supported yet.")
         clean_key = str(key).lower()
         self._data[clean_key] = value
 
@@ -691,10 +806,6 @@ def append(
     ).coalesce()
 
 
-def is_sparse_any(a: torch.Tensor):
-    return a.is_sparse or a.is_sparse_csr
-
-
 def mul_sparse_sparse(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     if a.shape != b.shape:
         raise ValueError(
@@ -769,9 +880,10 @@ def matmul(
         and is_sparse_any(result)
         and (isinstance(a, SparseTensor) or isinstance(b, SparseTensor))
     ):
-        ret_sparse = torch.Tensor._make_subclass(
-            SparseTensor, result, result.requires_grad
-        )
-        ret_sparse._tensor = result
-        result = ret_sparse
+        # ret_sparse = torch.Tensor._make_subclass(
+        #     SparseTensor, result, result.requires_grad
+        # )
+        # ret_sparse._tensor = result
+        # result = ret_sparse
+        result = _make_sparse_subclass(result)
     return result

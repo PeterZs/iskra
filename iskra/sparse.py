@@ -119,7 +119,7 @@ def alias[T: torch.Tensor](x: T) -> T:
     """
     if x.is_sparse:
         x = x.coalesce()
-        return torch.sparse_coo_tensor(
+        x_alias = torch.sparse_coo_tensor(
             x.indices(),
             x.values(),
             x.shape,
@@ -127,16 +127,21 @@ def alias[T: torch.Tensor](x: T) -> T:
             device=x.device,
             is_coalesced=x.is_coalesced(),
         )
+        if isinstance(x, SparseTensor):
+            x_alias.__class__ = SparseTensor
+        return x_alias
     elif x.is_sparse_csr:
-        return torch.sparse_csr_tensor(
+        x_alias = torch.sparse_csr_tensor(
             x.crow_indices(),
             x.col_indices(),
             x.values(),
             x.shape,
             dtype=x.dtype,
             device=x.device,
-            check_invariants=False,
         )
+        if isinstance(x, SparseTensor):
+            x_alias.__class__ = SparseTensor
+        return x_alias
     else:
         return x.view_as(x)
 
@@ -157,6 +162,8 @@ class SparseTensor(torch.Tensor):
     scalar/vector/matrix multiplications which just work and ensure your gradients
     remain sparse (which is somehow not the default in PyTorch), indexing, slicing,
     as well as small helpers here and there to patch missing functionality.
+
+    Primarily, this class supports COO tensors; CSR tensor experience might be mixed.
 
     Warning:
         Constructing `SparseTensor` with COO values will automaticall call `coalesce()`
@@ -270,11 +277,12 @@ class SparseTensor(torch.Tensor):
             size,
             dtype=dtype,
             device=device,
-            requires_grad=requires_grad,
+            requires_grad=False,
             check_invariants=check_invariants,
             is_coalesced=is_coalesced,
         )
-        return cls(t)
+        t_cls = cls(t, layout="coo", requires_grad=requires_grad)
+        return t_cls
 
     @classmethod
     def from_csr(
@@ -296,9 +304,10 @@ class SparseTensor(torch.Tensor):
             size,
             dtype=dtype,
             device=device,
-            requires_grad=requires_grad,
+            requires_grad=False,
         )
-        return cls(t)
+        t_cls = cls(t, layout="csr", requires_grad=requires_grad)
+        return t_cls
 
     @classmethod
     def __torch_function__(
@@ -337,6 +346,10 @@ class SparseTensor(torch.Tensor):
             torch.Tensor.crow_indices,
             torch.Tensor.col_indices,
         }
+        square_funcs = {
+            torch.square,
+            torch.Tensor.square,
+        }
         non_tensor_funcs = {
             torch.Tensor.is_coalesced,
             torch.Tensor.dense_dim,
@@ -363,6 +376,8 @@ class SparseTensor(torch.Tensor):
                     ret = mul(a, b)
                 else:
                     ret = func(*args, **kwargs)
+        elif func in square_funcs:
+            ret = square(*args)
         else:
             with torch._C.DisableTorchFunctionSubclass():
                 ret = func(*args, **kwargs)
@@ -420,8 +435,9 @@ class SparseTensor(torch.Tensor):
 
     def __setitem__(self, index, value):
         raise NotImplementedError("Setting sparse tensor elements not supported yet.")
-        clean_key = str(key).lower()
-        self._data[clean_key] = value
+
+    def square(self) -> "SparseTensor":
+        return square(self)
 
 
 def coo_tensor(
@@ -887,3 +903,18 @@ def matmul(
         # result = ret_sparse
         result = _make_sparse_subclass(result)
     return result
+
+
+def square(x: SparseTensor) -> SparseTensor:
+    if x.is_sparse_csr:
+        return csr_tensor(
+            x.crow_indices(),
+            x.col_indices(),
+            x.values() ** 2,
+            x.shape,
+            dtype=x.dtype,
+            device=x.device,
+        )
+    else:
+        with torch._C.DisableTorchFunctionSubclass():
+            return torch.Tensor.square(x)

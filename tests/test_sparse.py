@@ -150,12 +150,14 @@ def test_indexing():
     print(a_dense[(True, False, True, False), (True, False, True, False)])
 
 
-def test_backward():
-    a_idx = torch.tensor([[0, 1, 1, 2, 3], [0, 1, 0, 2, 3]])
-    expected_grad = torch.tensor([4.0, 6.0, 12.0, 8.0, 10.0])
+def test_backward_coo():
+    a_idx = torch.tensor([[0, 1, 1, 2, 3], [0, 0, 1, 2, 3]])
+    a_val_list = [2.0, 6.0, 3.0, 4.0, 5.0]
+    expected_grad = torch.tensor([4.0, 12.0, 6.0, 8.0, 10.0])
+    expected_loss = torch.tensor(90.0)
 
     # Test base use-case:
-    a_val = torch.tensor([2.0, 3.0, 6.0, 4.0, 5.0], requires_grad=True)
+    a_val = torch.tensor(a_val_list, requires_grad=True)
     a = sp.coo_tensor(a_idx, a_val, size=(4, 4)).coalesce()
     loss = a.square().sum()
     loss.backward()
@@ -163,10 +165,11 @@ def test_backward():
     assert isinstance(a, sp.SparseTensor)
     assert not a.is_leaf
     assert a_val.grad is not None
+    assert_equal(loss, expected_loss)
     assert_equal(a_val.grad, expected_grad)
 
     # Test with `.values()` call:
-    a_val = torch.tensor([2.0, 3.0, 6.0, 4.0, 5.0], requires_grad=True)
+    a_val = torch.tensor(a_val_list, requires_grad=True)
     a = sp.coo_tensor(a_idx, a_val, size=(4, 4)).coalesce()
     loss = a.values().square().sum()
     loss.backward()
@@ -174,15 +177,90 @@ def test_backward():
     assert isinstance(a, sp.SparseTensor)
     assert not a.is_leaf
     assert a_val.grad is not None
+    assert_equal(loss, expected_loss)
     assert_equal(a_val.grad, expected_grad)
 
     # Test with `sp.alias()` call:
-    a_val = torch.tensor([2.0, 3.0, 6.0, 4.0, 5.0], requires_grad=True)
+    a_val = torch.tensor(a_val_list, requires_grad=True)
     a = sp.coo_tensor(a_idx, a_val, size=(4, 4)).coalesce()
-    loss = sp.alias(a).square().sum()
+    a = sp.alias(a)
+    loss = a.square().sum()
     loss.backward()
 
     assert isinstance(a, sp.SparseTensor)
     assert not a.is_leaf
     assert a_val.grad is not None
+    assert_equal(loss, expected_loss)
     assert_equal(a_val.grad, expected_grad)
+
+    # Test with `sp.SparseTensor` as leaf tensor:
+    a_val = torch.tensor(a_val_list)
+    a = sp.coo_tensor(a_idx, a_val, size=(4, 4), requires_grad=True)
+    loss = a.square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert a.is_leaf
+    assert a_val.grad is None
+    assert_equal(loss, expected_loss)
+    assert_equal(a.grad.indices(), a.indices())
+    assert_equal(a.grad.values(), expected_grad)
+
+
+def test_backward_csr():
+    crow = torch.tensor([0, 1, 3, 4, 5])
+    col = torch.tensor([0, 0, 1, 2, 3])
+    val_list = [2.0, 6.0, 3.0, 4.0, 5.0]
+    expected_grad = torch.tensor([4.0, 12.0, 6.0, 8.0, 10.0])
+    expected_loss = torch.tensor(90.0)
+
+    # Test base use-case:
+    a_val = torch.tensor(val_list, requires_grad=True)
+    a = sp.csr_tensor(crow, col, a_val, size=(4, 4))
+    loss = a.square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert not a.is_leaf
+    assert a_val.grad is not None
+    assert_equal(loss, expected_loss)
+    assert_equal(a_val.grad, expected_grad)
+
+    # Test with `.values()` call:
+    a_val = torch.tensor(val_list, requires_grad=True)
+    a = sp.csr_tensor(crow, col, a_val, size=(4, 4))
+    loss = a.values().square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert not a.is_leaf
+    assert a_val.grad is not None
+    assert_equal(loss, expected_loss)
+    assert_equal(a_val.grad, expected_grad)
+
+    # Test with `sp.alias()` call:
+    a_val = torch.tensor(val_list, requires_grad=True)
+    a = sp.csr_tensor(crow, col, a_val, size=(4, 4))
+    a = sp.alias(a)
+    loss = a.square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert not a.is_leaf
+    assert a_val.grad is not None
+    assert_equal(loss, expected_loss)
+    assert_equal(a_val.grad, expected_grad)
+
+    # Test with `sp.SparseTensor` as leaf tensor:
+    a_val = torch.tensor(val_list)
+    a = sp.csr_tensor(crow, col, a_val, size=(4, 4), requires_grad=True)
+    loss = a.square().sum()
+    loss.backward()
+
+    assert isinstance(a, sp.SparseTensor)
+    assert a.is_leaf
+    assert a_val.grad is None
+    assert_equal(loss, expected_loss)
+    assert_equal(a.grad.crow_indices(), a.crow_indices())
+    assert_equal(a.grad.col_indices(), a.col_indices())
+    assert_equal(a.grad.values(), expected_grad)

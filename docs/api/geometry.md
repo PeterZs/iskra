@@ -26,3 +26,17 @@ Except in a few select cases (like `iskra.vertex_normals`), the functions in thi
 .. include:: generated/iskra.geometry.element_quality.rst
 .. include:: generated/iskra.geometry.normals.rst
 ```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.geometry.barycentric
+generated/iskra.geometry.distances
+generated/iskra.geometry.volume
+generated/iskra.geometry.angles
+generated/iskra.geometry.bbox
+generated/iskra.geometry.coordinate_system
+generated/iskra.geometry.element_quality
+generated/iskra.geometry.normals
+```

@@ -18,3 +18,32 @@ If manually digging through the docs isn't your thing, here is a user guide for 
     ></iframe>
 
 ```
+
+## System Design
+
+For an academic treatment of the system constraints and ensuing design, please refer to our SIGGRAPH 2026 Journal Track paper:
+
+```{eval-rst}
+.. raw:: html
+
+    <object
+        data="https://anadodik.github.io/publication/iskra/iskra.pdf"
+        type="application/pdf"
+        style="width: 100%; height: 80vh;"
+    >
+        <p>
+        <a href="https://anadodik.github.io/publication/iskra/iskra.pdf">Download the PDF</a>
+        </p>
+    </object>
+```
+[Download the PDF](https://anadodik.github.io/publication/iskra/iskra.pdf)
+
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+scatter-gather
+sparse
+inverse
+```

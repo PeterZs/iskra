@@ -4,8 +4,9 @@ options:
   maxdepth: 1
 entries:
   - file: guide/index
+    title: User Guide
     options:
-      hidden: True
+      hidden: False
     entries:
       - file: guide/scatter-gather
         options:

@@ -8,3 +8,10 @@
 
 .. include:: generated/iskra.random.rst
 ```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.random
+```

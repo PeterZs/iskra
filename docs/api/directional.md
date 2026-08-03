@@ -12,3 +12,11 @@ served as inspiration for this module.
 
 .. include:: generated/iskra.directional.rst
 ```
+
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.directional
+```

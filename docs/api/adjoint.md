@@ -8,3 +8,10 @@
 
 .. include:: generated/iskra.adjoint.rst
 ```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.adjoint
+```

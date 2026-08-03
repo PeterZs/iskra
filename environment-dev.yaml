@@ -30,7 +30,7 @@ dependencies:
       - sphinx-autobuild==2025.8.25
       - sphinx_github_style==1.2.2
       - sphinx-math-dollar==1.3
-      # Deployment
+      # Build and Deployment
       - nanobind>=2.5.0
       - scikit-build-core>=0.10.7
       - pyproject-metadata

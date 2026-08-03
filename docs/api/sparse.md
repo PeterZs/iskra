@@ -12,3 +12,11 @@
 .. include:: generated/iskra.sparse.rst
 .. include:: generated/iskra.sparse_linalg.rst
 ```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.sparse
+generated/iskra.sparse_linalg
+```

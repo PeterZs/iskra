@@ -1,5 +1,3 @@
-import importlib
-import inspect
 import sys
 from pathlib import Path
 
@@ -9,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent / "ext"))
 project = "iskra ✨"
 copyright = "2022, Ana Dodik"
 author = "Ana Dodik"
-release = "0.1.0"
+release = "0.0.1"
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -22,7 +20,7 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_github_style",
     "sphinx_math_dollar",
-    "sphinx_external_toc",
+    # "sphinx_external_toc",
     "shape_tooltips",
 ]
 
@@ -66,8 +64,9 @@ napoleon_use_rtype = False
 napoleon_custom_sections = [("Returns", "params_style")]
 napoleon_use_admonition_for_examples = False
 
-external_toc_path = "_toc.yml"
+# external_toc_path = "_toc.yml"
 
+html_baseurl = "https://iskra-graphics.org"
 html_theme = "pydata_sphinx_theme"
 html_static_path = ["static"]
 html_css_files = ["custom.css"]

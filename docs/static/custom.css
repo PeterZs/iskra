@@ -7,6 +7,7 @@ html[data-theme="light"] {
     --pst-color-link: var(--pst-color-primary);
     --pst-color-link-hover: var(--pst-color-secondary);
 }
+
 html[data-theme="dark"] {
     --pst-color-primary: #c44a5c;
     --pst-color-secondary: #3cb8a5;
@@ -15,6 +16,10 @@ html[data-theme="dark"] {
     --pst-color-inline-code: var(--pst-color-primary);
     --pst-color-link: var(--pst-color-primary);
     --pst-color-link-hover: var(--pst-color-secondary);
+}
+
+.bd-header {
+    border-bottom: 1px solid var(--pst-color-primary);
 }
 
 .linkcode-link {

@@ -20,7 +20,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anadodik/iskra"
+Homepage = "https://iskra-graphics.org"
+Documentation = "https://iskra-graphics.org"
+Repository = "https://github.com/anadodik/iskra"
+Issues = "https://github.com/anadodik/iskra/issues"
 
 [build-system]
 requires = [

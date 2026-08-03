@@ -12,3 +12,11 @@ Two different formalisms for doing geometry processing on meshes.
 .. include:: generated/iskra.dec.rst
 .. include:: generated/iskra.fem.rst
 ```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.dec
+generated/iskra.fem
+```

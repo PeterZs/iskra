@@ -10,3 +10,10 @@ The topology module in `iskra ✨` allows you to extract topology defined in a m
 
 .. include:: generated/iskra.topology.rst
 ```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+generated/iskra.topology
+```

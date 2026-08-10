@@ -268,9 +268,51 @@ class SparseTensor(torch.Tensor):
         check_invariants: bool = False,
         is_coalesced: bool = True,
     ) -> "SparseTensor":
-        """Construct a COO SparseTensor from data."""
+        """Constructs a COO `SparseTensor` from indices and values.
+
+        This method wraps `torch.sparse_coo_tensor()` and does plumbing to convert
+        it to a `SparseTensor`. The argument and return descriptions reuse
+        the original torch descriptions. See that function for more details.
+
+        See Also:
+            `torch.sparse_coo_tensor()`, `coo_tensor()`.
+
+        Args:
+            indices (Tensor[Int64, [Dim, nnz]] | tuple[Tensor[Int64, [nnz]], ...] | list[Tensor[Int64, [nnz]]]):
+                Initial data for the tensor. Will be cast to a
+                `Tensor[Int64, [Dim, nzz]]` internally. If `indices` is a sequence
+                of 1D tensors, we stack them into a index tensor. The indices are the
+                coordinates of the non-zero values in the matrix, and thus
+                should be two-dimensional where the first dimension is the
+                number of tensor dimensions and the second dimension is the
+                number of non-zero values. A sequence of per-dimension index
+                tensors is also accepted and stacked along dimension 0.
+            values (Tensor[DType, [nnz]]): Initial values for the tensor.
+            size (list[int] | tuple[int, ...] | None): Size of the sparse
+                tensor. If not provided the size will be inferred as the
+                minimum size big enough to hold all non-zero elements.
+            dtype (torch.dtype): the desired data type of returned
+                tensor. Default: if None, infers data type from `values`.
+            device (torch.device): the desired device of returned
+                tensor. Default: if None, uses the device of the input tensors.
+            requires_grad (bool): If ``True``, the returned `SparseTensor` is
+                an autograd leaf. Default: ``False``.
+            check_invariants (bool): If sparse tensor invariants are checked.
+                Default: ``False``.
+            is_coalesced (bool): When ``True``, the caller is responsible for
+                providing tensor indices that correspond to a coalesced tensor.
+                If the `check_invariants` flag is False, no error will be
+                raised if the prerequisites are not met and this will lead to
+                silently incorrect results. To force coalescion please use
+                :meth:`~torch.Tensor.coalesce` on the resulting Tensor.
+                Default: ``True``.
+
+        Returns:
+            SparseTensor[Float, [*Bs, N, M, *Ds]]: Sparse tensor in COO layout.
+        """
         if isinstance(indices, Sequence) and not isinstance(indices, torch.Tensor):
             indices = torch.stack(indices, 0)
+        # We pass requires_grad to the SparseTensor __new__ so that it is the leaf.
         t = torch.sparse_coo_tensor(
             indices,
             values,
@@ -296,7 +338,43 @@ class SparseTensor(torch.Tensor):
         device: torch.device | None = None,
         requires_grad: bool = False,
     ) -> "SparseTensor":
-        """Construct a CSR SparseTensor from data."""
+        """Constructs a CSR `SparseTensor` from compressed-row data.
+
+        This method wraps `torch.sparse_csr_tensor()` and does plumbing to convert
+        it to a `SparseTensor`. The argument and return descriptions reuse
+        the original torch descriptions. See that function for more details.
+
+        See Also:
+            `torch.sparse_csr_tensor()`, `csr_tensor()`.
+
+        Args:
+            crow_indices (Tensor[Int64, [*Bs, N + 1]]): (B+1)-dimensional array
+                of size ``(*batchsize, nrows + 1)``. The last element of each
+                batch is the number of non-zeros. This tensor encodes the index
+                in values and col_indices depending on where the given row
+                starts. Each successive number in the tensor subtracted by the
+                number before it denotes the number of elements in a given row.
+            col_indices (Tensor[Int64, [*Bs, nnz]]): Column co-ordinates of each
+                element in values. (B+1)-dimensional tensor with the same length
+                as values.
+            values (Tensor[Float, [*Bs, nnz, *Ds]]): Initial values for the
+                tensor. Represents a (1+K)-dimensional tensor where ``K`` is the
+                number of dense dimensions.
+            size (list[int] | tuple[int, ...] | None): Size of the sparse
+                tensor: ``(*batchsize, nrows, ncols, *densesize)``. If not
+                provided, the size will be inferred as the minimum size big
+                enough to hold all non-zero elements.
+            dtype (torch.dtype): the desired data type of returned
+                tensor. Default: if None, infers data type from `values`.
+            device (torch.device): the desired device of returned
+                tensor. Default: if None, uses the device of the input tensors.
+            requires_grad (bool): If ``True``, the returned `SparseTensor` is
+                an autograd leaf. Default: ``False``.
+
+        Returns:
+            SparseTensor[Float, [*Bs, N, M, *Ds]]: Sparse tensor in CSR layout.
+        """
+        # We pass requires_grad to the SparseTensor __new__ so that it is the leaf.
         t = torch.sparse_csr_tensor(
             crow_indices,
             col_indices,
@@ -393,16 +471,55 @@ class SparseTensor(torch.Tensor):
     def __matmul__(
         self, other: "SparseTensor | torch.Tensor"
     ) -> "SparseTensor | torch.Tensor":
+        """Matrix multiplication which works with sparse tensors.
+
+        Allows the user to write `a @ b` with sparse tensors and still get the
+        expected behavior (like sparse gradients to sparse tensors).
+
+        Important:
+            Wrapper around `matmul()`.
+
+        Args:
+            other (SparseTensor | torch.Tensor): Left-multiply with this tensor.
+
+        Returns:
+            SparseTensor | torch.Tensor: Multiplied result tensor.
+        """
         return matmul(self, other)
 
     def __rmatmul__(
         self, other: "SparseTensor | torch.Tensor"
     ) -> "SparseTensor | torch.Tensor":
+        """Matrix multiplication which works with sparse tensors.
+
+        Allows the user to write `a @ b` with sparse tensors and still get the
+        expected behavior (like sparse gradients to sparse tensors).
+
+        Important:
+            Wrapper around `matmul()`.
+
+        Args:
+            other (SparseTensor | torch.Tensor): Right-multiply with this tensor.
+
+        Returns:
+            SparseTensor | torch.Tensor: Multiplied result tensor.
+        """
         return matmul(self, other)
 
     def __mul__(
         self, other: "SparseTensor | torch.Tensor"
     ) -> "SparseTensor | torch.Tensor":
+        """Elementwise multiplication which works with sparse tensors.
+
+        Important:
+            Wrapper around `mul()`.
+
+        Args:
+            other (SparseTensor | torch.Tensor): Multiply with this tensor.
+
+        Returns:
+            SparseTensor | torch.Tensor: Multiplied result tensor.
+        """
         if isinstance(other, torch.Tensor):
             return mul(self, other)
         else:
@@ -411,15 +528,45 @@ class SparseTensor(torch.Tensor):
     def __rmul__(
         self, other: "SparseTensor | torch.Tensor"
     ) -> "SparseTensor | torch.Tensor":
+        """Elementwise multiplication which works with sparse tensors.
+
+        Important:
+            Wrapper around `mul()`.
+
+        Args:
+            other (SparseTensor | torch.Tensor): Multiply with this tensor.
+
+        Returns:
+            SparseTensor | torch.Tensor: Multiplied result tensor.
+        """
         if isinstance(other, torch.Tensor):
             return mul(other, self)
         else:
             return super().__rmul__(other)
 
     def reshape(self, *shape: int) -> "SparseTensor":
+        """Reshapes the tensor into a specified shape.
+
+        Important:
+            Wrapper around `reshape()`.
+
+        Args:
+            *shape (int): Dimensions for the resulting tensor
+
+        Returns:
+            SparseTensor: Reshaped tensor with a view into the same data.
+        """
         return reshape(self, *shape)
 
-    def scipy(self):
+    def scipy(self) -> scipy.sparse.coo_array:
+        """Constructs a SciPy tensor with the same data (detaches autodiff graph).
+
+        Important:
+            Wrapper around `to_scipy()`.
+
+        Returns:
+            scipy.sparse.coo_array: SciPy tensor with the same data.
+        """
         return to_scipy(self)
 
     def torch_tensor(self) -> torch.Tensor:
@@ -427,7 +574,18 @@ class SparseTensor(torch.Tensor):
         result.__class__ = torch.Tensor
         return result
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: Any) -> "SparseTensor":
+        """Slices the sparse tensor.
+
+        Important:
+            Wrapper around `get_slice()`.
+
+        Args:
+            index (Any): Slicing indices. See `get_slice()` for more information.
+
+        Returns:
+            SparseTensor: Sliced sparse tensor.
+        """
         if isinstance(index, tuple):
             return get_slice(self, *index)
         else:
@@ -437,6 +595,14 @@ class SparseTensor(torch.Tensor):
         raise NotImplementedError("Setting sparse tensor elements not supported yet.")
 
     def square(self) -> "SparseTensor":
+        """Elementwise square of the matrix.
+
+        Important:
+            Wrapper around `iskra.sparse.square()`.
+
+        Returns:
+            SparseTensor: Matrix with squared entries.
+        """
         return square(self)
 
 
@@ -451,6 +617,11 @@ def coo_tensor(
     check_invariants=True,
     is_coalesced=False,
 ) -> SparseTensor:
+    """Constructs a COO `SparseTensor` from indices and values.
+
+    Important:
+        This function is a thin wrapper around `SparseTensor.from_coo()`.
+    """
     return SparseTensor.from_coo(
         indices,
         values,
@@ -473,6 +644,11 @@ def csr_tensor(
     device: torch.device | None = None,
     requires_grad: bool = False,
 ) -> SparseTensor:
+    """Constructs a CSR `SparseTensor` from compressed-row data.
+
+    Important:
+        This function is a thin wrapper around `SparseTensor.from_csr()`.
+    """
     return SparseTensor.from_csr(
         crow_indices,
         col_indices,
@@ -605,7 +781,7 @@ def _build_index_selection_mask(
 def get_slice(x: SparseTensor, *indices: _INDEX_TYPE) -> SparseTensor:
     """Slices a sparse tensor.
 
-    !!! warning
+    Warning:
         The behavior of this function is *not* the same PyTorch's [] operator.
         This function only slices a sparse Tensor via masking.
 
@@ -869,6 +1045,7 @@ def mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 def matmul(
     a: SparseTensor | torch.Tensor, b: SparseTensor | torch.Tensor
 ) -> SparseTensor | torch.Tensor:
+    # TODO: Differentiating through this function produces sparse gradients if the input tensor is sparse.
     if not is_sparse_any(a) and not is_sparse_any(b):
         result = a @ b
     elif is_sparse_any(a) and is_sparse_any(b):

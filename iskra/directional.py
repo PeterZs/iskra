@@ -13,14 +13,14 @@ from iskra.topology import face_index, get_subfaces
 
 
 def complex_nth_root(z: torch.Tensor, n: int) -> torch.Tensor:
-    """Compute the nth roots of a complex number z.
+    r"""Compute the nth roots of a complex number z.
 
     Args:
-        z (torch.Tensor): Tensor of any shape of complex numbers.
+        z (Tensor[Complex, [...]]): Complex numbers.
         n (int): Order of root to compute.
 
     Returns:
-        torch.Tensor: `[..., n]` tensor containing the nth roots of z.
+        Tensor[Complex, [..., n]]: The $n\text{th}$ roots of z.
     """
     r = torch.abs(z)
     theta = torch.angle(z)
@@ -36,19 +36,19 @@ def complex_nth_root(z: torch.Tensor, n: int) -> torch.Tensor:
 def to_intrinsic(
     v: torch.Tensor, tangents: torch.Tensor, binormals: torch.Tensor
 ) -> torch.Tensor:
-    """Projects 3D vector onto 2D basis spanned by `tangent` and `binormal`.
+    """Projects 3D vector onto 2D basis spanned by `tangents` and `binormals`.
 
-    !!! warning
+    Important:
         This function assumes that `v` is already in the plane spanned by the
         basis vectors.
 
     Args:
-        v (torch.Tensor): `[B, 3]` tensor to be projected.
-        tangents (torch.Tensor): `[B, 3]` tensor containing the first basis vector.
-        binormals (torch.Tensor): `[B, 3]` tensor containing the second basis vector.
+        v (Tensor[Float, [B, 3]]): Vector to be projected.
+        tangents (Tensor[Float, [B, 3]]): First basis vector.
+        binormals (Tensor[Float, [B, 3]]): Second basis vector.
 
     Returns:
-        torch.Tensor: `[B]` complex tensor containing the projection of `v`.
+        Tensor[Complex, [B]]: Intrinsic projection of `v`.
     """
     return torch.linalg.vecdot(v, tangents) + 1j * torch.linalg.vecdot(v, binormals)
 
@@ -56,16 +56,17 @@ def to_intrinsic(
 def to_extrinsic(
     u: torch.Tensor, tangents: torch.Tensor, binormals: torch.Tensor
 ) -> torch.Tensor:
-    """Projects intrinsic complex directional into 3D.
+    """Reconstructs 3D vector from intrinsic complex directional.
 
     Args:
-        u (torch.Tensor): `[B]` complex tensor to be projected.
-        tangents (torch.Tensor): `[B, 3]` tensor containing the first basis vector.
-        binormals (torch.Tensor): `[B, 3]` tensor containing the second basis vector.
+        u (Tensor[Complex, [B]]): Directional to be embedded.
+        tangents (Tensor[Float, [B, 3]]): First basis vector.
+        binormals (Tensor[Float, [B, 3]]): Second basis vector.
 
     Returns:
-        torch.Tensor: `[B, 3]` real tensor containing the embedding of `u`.
+        Tensor[Float, [B, 3]]: 3D embedding of `u`.
     """
+    # TODO: fix typing to address 1D vs nD u.
     is_1d = False
     if u.ndim == 1:
         is_1d = True
@@ -82,22 +83,21 @@ def to_extrinsic(
 def to_intrinsic_n_rosy(
     v: torch.Tensor, tangents: torch.Tensor, binormals: torch.Tensor, n: int
 ) -> torch.Tensor:
-    """Projects 3D vector onto 2D basis spanned by `tangent` and `binormal`.
+    """Constructs an N-RoSy field from a 3D vector.
 
-    !!! warning
+    Important:
         This function assumes that `v` is already in the plane spanned by the
         basis vectors.
 
     Args:
-        v (torch.Tensor): `[B, 3]` tensor to be projected. It corresponds to any of the
-            vectors in the N-RoSy field and the remaining ones
-            are computed from the degree of symmetry.
-        tangents (torch.Tensor): `[B, 3]` tensor containing the first basis vector.
-        binormals (torch.Tensor): `[B, 3]` tensor containing the second basis vector.
+        v (Tensor[Float, [B, 3]]): Vector to be projected. It can be any of the vectors
+            in the N-RoSy field. The rest follow from the degree of symmetry.
+        tangents (Tensor[Float, [B, 3]]): First basis vector.
+        binormals (Tensor[Float, [B, 3]]): Second basis vector.
         n (int): The degree of symmetry of the N-RoSy field.
 
     Returns:
-        torch.Tensor: `[B]` complex tensor containing the encoding of `v`.
+        Tensor[Complex, [B]]: Intrinsic N-RoSy field with `v` as one of its roots.
     """
     return to_intrinsic(v, tangents, binormals) ** n
 
@@ -105,16 +105,16 @@ def to_intrinsic_n_rosy(
 def to_extrinsic_n_rosy(
     u: torch.Tensor, tangents: torch.Tensor, binormals: torch.Tensor, n: int
 ) -> torch.Tensor:
-    """Projects intrinsic complex N-RoSy field into 3D vectors.
+    """Reconstructs 3D vectors from intrinsic complex N-RoSy field.
 
     Args:
-        u (torch.Tensor): `[B]` complex tensor to be projected.
-        tangents (torch.Tensor): `[B, 3]` tensor containing the first basis vector.
-        binormals (torch.Tensor): `[B, 3]` tensor containing the second basis vector.
+        u (Tensor[Complex, [B]]): N-RoSy field to be embedded.
+        tangents (Tensor[Float, [B, 3]]): First basis vector.
+        binormals (Tensor[Float, [B, 3]]): Second basis vector.
         n (int): The degree of symmetry of the N-RoSy field.
 
     Returns:
-        torch.Tensor: `[B, n, 3]` real tensor containing the embedding of `u`.
+        Tensor[Float, [B, n, 3]]: 3D embedding of `u`.
     """
     roots = complex_nth_root(u, n)
     extrinsic = torch.stack(
@@ -126,23 +126,21 @@ def to_extrinsic_n_rosy(
 def to_intrinsic_frame_field(
     u: torch.Tensor, v: torch.Tensor, tangents: torch.Tensor, binormals: torch.Tensor
 ) -> torch.Tensor:
-    """Projects 3D vectors onto 2D basis spanned by `tangent` and `binormal`.
+    """Constructs a frame field from two 3D vectors.
 
-    !!! warning
+    Important:
         This function assumes that `u` and `v` are already in the plane spanned by the
         basis vectors.
 
     Args:
-        u (torch.Tensor): `[B, 3]` tensor to be projected. It corresponds to one
-            of the directions of the frame field.
-        v (torch.Tensor): `[B, 3]` tensor to be projected.  It corresponds to the other
-            direction of the frame field.
-        tangents (torch.Tensor): `[B, 3]` tensor containing the first basis vector.
-        binormals (torch.Tensor): `[B, 3]` tensor containing the second basis vector.
-        n (int): The degree of symmetry of the N-RoSy field.
+        u (Tensor[Float, [B, 3]]): First direction defining the frame field.
+        v (Tensor[Float, [B, 3]]): Second direction defining the frame field.
+        tangents (Tensor[Float, [B, 3]]): First basis vector.
+        binormals (Tensor[Float, [B, 3]]): Second basis vector.
 
     Returns:
-        torch.Tensor: `[B, 2]` complex tensor containing the encoding of `v`.
+        Tensor[Complex, [B, 2]]: Intrinsic frame field with $u$ and $v$ as two of
+            its roots (remaining ones will be $-u$ and $-v$).
     """
     u_sq = to_intrinsic(u, tangents, binormals) ** 2
     v_sq = to_intrinsic(v, tangents, binormals) ** 2
@@ -154,16 +152,15 @@ def to_intrinsic_frame_field(
 def to_extrinsic_frame_field(
     uv: torch.Tensor, tangents: torch.Tensor, binormals: torch.Tensor
 ) -> torch.Tensor:
-    """Projects intrinsic complex N-RoSy field into 3D vectors.
+    """Reconstructs 3D vectors from complex frame field.
 
     Args:
-        u (torch.Tensor): `[B]` complex tensor to be projected.
-        tangents (torch.Tensor): `[B, 3]` tensor containing the first basis vector.
-        binormals (torch.Tensor): `[B, 3]` tensor containing the second basis vector.
-        n (int): The degree of symmetry of the N-RoSy field.
+        uv (Tensor[Complex, [B, 2]]): Frame field to be unprojected.
+        tangents (Tensor[Float, [B, 3]]): First basis vector.
+        binormals (Tensor[Float, [B, 3]]): Second basis vector.
 
     Returns:
-        torch.Tensor: `[B, n, 3]` real tensor containing the embedding of `u`.
+        Tensor[Float, [B, 4, 3]]: 3D embedding of `uv`.
     """
     coeff_2 = uv[..., 0]
     coeff_0 = uv[..., 1]
@@ -182,24 +179,23 @@ def to_extrinsic_frame_field(
 
 def face_tangent_bundle(
     vertices: torch.Tensor, faces: torch.Tensor, edge_flaps: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Construct a tangent bundle for a face-based vector field.
 
     Args:
-        vertices (torch.Tensor): `[V, D]` tensor, where V is the number of vertices
-            and D is either 2 or 3.
-        faces (torch.Tensor): `[F, 3]` tensor, where F is the number of triangle faces.
-        edge_flaps (torch.Tensor): `[E, 2]` tensor, where E is the number of
-            unique edges in the mesh. Use `iskra.edge_flaps` to obtain it.
+        vertices (Tensor[Float, [V, Dim]]): Mesh vertices. Dim is either 2 or 3.
+        faces (Tensor[Int64, [F, 3]]): Triangle faces.
+        edge_flaps (Tensor[Int64, [E, 2]]): Unique edges in the mesh. Use
+            `iskra.edge_flaps` to obtain it.
 
     Returns:
-        torch.Tensor: `[F, 3]` tensor of face tangents, where F is the number of faces.
-        torch.Tensor: `[F, 3]` tensor of face binormals, where F is the number of faces.
-        torch.Tensor: `[E]` complex tensor with the discrete Levi-Civita connection that
+        Tensor[Float, [F, 3]]: Face tangents.
+        Tensor[Float, [F, 3]]: Face binormals.
+        Tensor[Complex, [E]]: Discrete Levi-Civita connection that
             transports vectors from face `edge_flaps[:, 0]` to face `edge_flaps[:, 1]`.
-        torch.Tensor: `[E, 2]` complex tensor with the the projection that takes vectors
-            in the dual edge tangent space and transports them into the tangent space of
-            `edge_flaps[:, 0]`, resp. `edge_flaps[:, 1]`.
+        Tensor[Complex, [E, 2]]: Projection operator. Given a directional in the tangent
+            space of a dual edge, it transports it into the tangent spaces
+            of `edge_flaps[:, 0]`, resp. `edge_flaps[:, 1]`.
     """
     device = vertices.device
 
@@ -247,21 +243,24 @@ def transport_from_face(
 ) -> torch.Tensor:
     """Parallelly transports of a vector from face source to all neighboring faces.
 
+    Note:
+        This function only tansports stuff within a 1-ring. It can be useful for visual
+        debugging, e.g., making sure your connection works well with your directionals.
+
     Args:
         source (int): Index of source face.
-        intrinsic (complex | torch.Tensor): Vector to be transported
-            in a complex representation. Use `to_intrinsic` to project
-            extrinsic vectors to intrinsic ones.
+        intrinsic (complex | Tensor[Complex, [...]]): Vector to be transported.
+            Use `to_intrinsic` to project extrinsic vectors to intrinsic ones.
         n_faces (int): Number of faces in the mesh.
-        flaps (torch.Tensor): `[E, 2]` tensor specifying the edge-to-face
-            connectivity in the mesh. See `iskra.edge_flaps`.
-        connection (torch.Tensor): '[E]` tensor specifying the discrete connection.
+        flaps (Tensor[Int64, [E, 2]]): Edge-to-face connectivity in the mesh.
+            See `iskra.edge_flaps`.
+        connection (Tensor[Complex, [E]]): Discrete connection.
             You can use `face_tangent_bundle` to obtain a connection from a mesh.
         n (int): The degree of symmetry of the N-RoSy field.
             Is simply 1 for vector fields.
 
     Returns:
-        torch.Tensor: `[F]` complex tensor with the transported vectors.
+        Tensor[Complex, [F]]: Transported vectors.
     """
     connection = connection**n
     transported = torch.zeros(
@@ -291,13 +290,13 @@ def face_connection_d_01(
 
     Args:
         n_faces (int): Number of faces in the mesh.
-        flaps (torch.Tensor): `[E, 2]` tensor specifying the edge-to-face
-            connectivity in the mesh. See `iskra.edge_flaps`.
-        connection (torch.Tensor): `[E]` tensor specifying the discrete connection.
-            You can use `face_tangent_bundle` to obtain a connection from a mesh.
+        flaps (Tensor[Int64, [E, 2]]): Edge-to-face connectivity in the mesh.
+            See `edge_flaps()`.
+        connection (Tensor[Complex, [E]]): Discrete connection.
+            You can use `face_tangent_bundle()` to obtain a connection from a mesh.
 
     Returns:
-        torch.Tensor: `[E, F]` complex tensor of the face-based connection differetial.
+        SparseTensor[Complex, [E, F]]: Face-based connection differetial.
     """
     is_flap = (flaps[:, 0] != -1) & (flaps[:, 1] != -1)
     int_flaps = flaps[is_flap]
@@ -321,14 +320,14 @@ def face_connection_mass(
     """Makes the face-based connection mass matrix for an N-RoSy field via edge lengths.
 
     Args:
-        verts (torch.Tensor): `[V, 3]` tensor of mesh vertices.
-        edges (torch.Tensor): `[E, 2]` tensor of mesh edges.
-        face_to_edge (torch.Tensor): `[F, 3]` tensor of face-to-edge connections.
-        flaps (torch.Tensor): `[E, 2]` tensor specifying the edge-to-face
-            connectivity in the mesh. See `iskra.edge_flaps`.
+        verts (Tensor[Float, [V, 3]]): Mesh vertices.
+        edges (Tensor[Int64, [E, 2]]): Mesh edges.
+        face_to_edge (Tensor[Int64, [F, 3]]): Face-to-edge connections.
+        flaps (Tensor[Int64, [E, 2]]): Edge-to-face connectivity in the mesh.
+            See `edge_flaps()`.
 
     Returns:
-        torch.Tensor: `[E, E]` complex mass matrix for a face-based N-RoSy field.
+        SparseTensor[Complex, [E, E]]: Mass matrix for a face-based N-RoSy field.
     """
     edge_vecs = face_index(verts, edges)
     lengths = edge_lengths(edge_vecs)
@@ -349,15 +348,15 @@ def face_connection_laplacian(
     """Construct the face-based connection laplacian for an N-RoSy field.
 
     Args:
-        verts (torch.Tensor): `[V, 3]` tensor of mesh vertices.
-        faces (torch.Tensor): `[F, 2]` tensor of mesh faces.
-        flaps (torch.Tensor): `[E, 2]` tensor specifying the edge-to-face
-            connectivity in the mesh. See `iskra.edge_flaps`.
-        connection (torch.Tensor): Discrete connection. You can use
-            `face_tangent_bundle` to obtain a connection from a mesh.
+        verts (Tensor[Float, [V, 3]]): Mesh vertices.
+        faces (Tensor[Int64, [F, 2]]): Mesh faces.
+        flaps (Tensor[Int64, [E, 2]]): Edge-to-face connectivity in the mesh.
+            See `edge_flaps()`.
+        connection (Tensor[Complex, [E]]): Discrete connection. You can use
+            `face_tangent_bundle()` to obtain a connection from a mesh.
 
     Returns:
-        torch.Tensor: `[F, F]` complex tensor of the face-based connection Laplacian.
+        SparseTensor[Complex, [F, F]]: Face-based connection Laplacian.
     """
     edges, face_to_edge, _ = get_subfaces(faces)
     mass = face_connection_mass(verts, edges, face_to_edge, flaps)
@@ -375,29 +374,27 @@ def smooth_n_rosy(
     sources: int | Iterable[int] | torch.Tensor,
     intrinsic: complex | Iterable[complex] | torch.Tensor,
 ) -> torch.Tensor:
-    """Smooth an N-RoSy field.
+    """Smooths an N-RoSy field.
 
     Args:
-        vertices (torch.Tensor): `[V, D]` tensor, where V is the number of vertices
-            and D is either 2 or 3.
-        faces (torch.Tensor): `[F, 3]` tensor, where F is the number of triangle faces.
-        flaps (torch.Tensor): `[E, 2]` tensor specifying the edge-to-face
-            connectivity in the mesh. See `iskra.edge_flaps`.
-        connection (torch.Tensor): `[E]` tensor specifying the discrete connection.
-            You can use `face_tangent_bundle` to obtain a connection from a mesh.
+        vertices (Tensor[Float, [V, Dim]]): Mesh vertices. Dim is either 2 or 3.
+        faces (Tensor[Int64, [F, 3]]): Triangle faces.
+        flaps (Tensor[Int64, [E, 2]]): Edge-to-face connectivity in the mesh.
+            See `edge_flaps()`.
+        connection (Tensor[Complex, [E]]): Discrete connection.
+            You can use `face_tangent_bundle()` to obtain a connection from a mesh.
         n (int): The degree of symmetry of the N-RoSy field.
             Is simply 1 for vector fields.
-        sources (int | Iterable[int] | torch.Tensor): Array of indices of
+        sources (int | Iterable[int] | Tensor[Int64, [...]]): Array of indices of
             faces with hard constraints.
-        intrinsic (complex | torch.Tensor): Array of complex N-RoSy coefficients
-            to be transported. Use `to_intrinsic_n_rosy` to project extrinsic vectors
-            to intrinsic ones.
+        intrinsic (complex | Tensor[Complex, [...]]): Array of complex N-RoSy
+            coefficients to be transported. Use `to_intrinsic_n_rosy()` to project
+            extrinsic vectors to intrinsic N-RoSy ones.
 
     Returns:
-        torch.Tensor: `[F]` complex tensor with the smoothed vectors.
+        Tensor[Complex, [F]]: Smoothed vectors.
     """
     device = vertices.device
-    dtype = intrinsic.dtype
 
     if isinstance(sources, int):
         sources = torch.tensor([sources], device=device)
@@ -408,9 +405,10 @@ def smooth_n_rosy(
         intrinsic = torch.tensor([intrinsic], device=device)
     elif not isinstance(intrinsic, torch.Tensor):
         intrinsic = torch.tensor(intrinsic, device=device)
+    assert isinstance(intrinsic, torch.Tensor)
 
     laplacian = face_connection_laplacian(vertices, faces, flaps, connection**n)
-    rhs = torch.zeros([faces.shape[0]], dtype=dtype)
+    rhs = torch.zeros([faces.shape[0]], dtype=intrinsic.dtype)
     _, transported = min_quadratic_energy(laplacian, rhs, sources, intrinsic)
     return transported
 
@@ -425,31 +423,28 @@ def smooth_frame_field(
     partial_idcs: int | Iterable[int] | torch.Tensor | None = None,
     partial_vals: complex | Iterable[complex] | torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Smooth an N-RoSy field.
+    """Smooth a frame field with sparse hard constraints.
 
     Args:
-        vertices (torch.Tensor): `[V, D]` tensor, where V is the number of vertices
-            and D is either 2 or 3.
-        faces (torch.Tensor): `[F, 3]` tensor, where F is the number of triangle faces.
-        flaps (torch.Tensor): `[E, 2]` tensor specifying the edge-to-face
-            connectivity in the mesh. See `iskra.edge_flaps`.
-        connection (torch.Tensor): `[E]` tensor specifying the discrete connection.
-            You can use `face_tangent_bundle` to obtain a connection from a mesh.
-        n (int): The degree of symmetry of the N-RoSy field.
-            Is simply 1 for vector fields.
-        source_idcs (int | Iterable[int] | torch.Tensor): `[S]` indices of
+        vertices (Tensor[Float, [V, 2 | 3]]): Mesh vertices.
+        faces (Tensor[Int64, [F, 3]]): Triangle faces.
+        flaps (Tensor[Int64, [E, 2]]): Edge-to-face connectivity in the mesh.
+            See `edge_flaps()`.
+        connection (Tensor[Complex, [E]]): Discrete connection.
+            You can use `face_tangent_bundle()` to obtain a connection from a mesh.
+        source_idcs (int | Iterable[int] | Tensor[Int64, [S]]): Indices of
             faces with hard constraints.
-        source_vals (tuple[complex, complex] | torch.Tensor): `[S, 2]` complex
-            polyvector coefficients to be transported. Use `to_intrinsic_n_rosy`
+        source_vals (tuple[complex, complex] | Tensor[Complex, [S, 2]]): Complex
+            polyvector coefficients to be transported. Use `to_intrinsic_frame_field()`
             to project extrinsic vectors to intrinsic ones.
-        partial_idcs (int | Iterable[int] | torch.Tensor): `[P]` indices of
+        partial_idcs (int | Iterable[int] | Tensor[Int64, [P]]): Indices of
             faces with hard partial constraints.
-        partial_vals (tuple[complex, complex] | torch.Tensor): `[P]` complex 2-RoSy
-            polyvector coefficients to be transported.  Use `to_intrinsic_n_rosy`
-            with n=2 to project extrinsic vectors to intrinsic ones.
+        partial_vals (tuple[complex, complex] | Tensor[Complex, [P]]): Complex 2-RoSy
+            polyvector coefficients to be transported.  Use `to_intrinsic_frame_field()`
+            with `n=2` to project extrinsic vectors to intrinsic ones.
 
     Returns:
-        torch.Tensor: `[F, 2]` complex tensor with the smoothed vectors.
+        Tensor[Complex, [F, 2]]: Smoothed vectors.
     """
     sources_exist = source_idcs is not None and source_vals is not None
     partial_exist = partial_idcs is not None and partial_vals is not None
@@ -521,11 +516,12 @@ def smooth_frame_field(
 
     system = partial_projection.adjoint() @ block_laplacian @ partial_projection
     rhs = torch.cat([block_rhs])
-    transported = partial_projection @ min_quadratic_energy(
+    _, transported = min_quadratic_energy(
         system,
         rhs,
         torch.cat([source_idcs, n_faces + source_idcs, n_faces + partial_idcs]),
         torch.cat([source_vals.mT.flatten(), -torch.ones_like(partial_vals)]),
     )
+    transported = partial_projection @ transported
     transported = transported.reshape(2, -1).mT
     return transported

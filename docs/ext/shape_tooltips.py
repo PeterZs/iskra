@@ -38,6 +38,7 @@ _TOOLTIPS = {
     "SDim": "Simplex corner count",
     "DType": "Element dtype",
     "Float": "Floating-point dtype",
+    "Complex": "Complex number dtype",
     "Int": "Integer dtype",
     "Int64": "64-bit integer dtype",
     "Bool": "Boolean dtype",

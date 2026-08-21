@@ -1,4 +1,6 @@
+import numpy as np
 import pytest
+import scipy
 import torch
 
 import iskra.sparse as sp
@@ -264,3 +266,33 @@ def test_backward_csr():
     assert_equal(a.grad.crow_indices(), a.crow_indices())
     assert_equal(a.grad.col_indices(), a.col_indices())
     assert_equal(a.grad.values(), expected_grad)
+
+
+def test_scipy_conversion():
+    a_idx = torch.tensor([[0, 1, 1, 2, 3], [0, 0, 1, 2, 3]])
+    a_val = torch.tensor([2.0, 6.0, 3.0, 4.0, 5.0])
+    a_coo = sp.coo_tensor(a_idx, a_val, size=(4, 4))
+    a_coo_sp: scipy.sparse.sparray = a_coo.scipy()
+    assert a_coo_sp.format == "coo"
+    assert_equal(a_coo.values().numpy(), a_coo_sp.data, atol=0, rtol=0)
+    assert_equal(a_coo.indices().numpy(), np.concat([a_coo_sp.coords]), atol=0, rtol=0)
+
+    a_coo_ret = sp.from_scipy(a_coo_sp)
+    assert a_coo_ret.layout == torch.sparse_coo
+    assert_equal(a_coo_ret.values().numpy(), a_coo_sp.data, atol=0, rtol=0)
+    assert_equal(
+        a_coo_ret.indices().numpy(), np.concat([a_coo_sp.coords]), atol=0, rtol=0
+    )
+
+    a_csr: sp.SparseTensor = a_coo.to_sparse_csr()
+    a_csr_sp: scipy.sparse.sparray = a_csr.scipy()
+    assert a_csr_sp.format == "csr"
+    assert_equal(a_csr.values().numpy(), a_csr_sp.data, atol=0, rtol=0)
+    assert_equal(a_csr.col_indices().numpy(), a_csr_sp.indices, atol=0, rtol=0)
+    assert_equal(a_csr.crow_indices().numpy(), a_csr_sp.indptr, atol=0, rtol=0)
+
+    a_csr_ret = sp.from_scipy(a_csr_sp)
+    assert a_csr_ret.layout == torch.sparse_csr
+    assert_equal(a_csr_ret.values().numpy(), a_csr_sp.data, atol=0, rtol=0)
+    assert_equal(a_csr_ret.col_indices().numpy(), a_csr_sp.indices, atol=0, rtol=0)
+    assert_equal(a_csr_ret.crow_indices().numpy(), a_csr_sp.indptr, atol=0, rtol=0)

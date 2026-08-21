@@ -164,7 +164,7 @@ def construct_graph_laplacian(dtype, device) -> tuple[torch.Tensor, torch.Tensor
     graph.add_nodes_from(range(n))
 
     lap = nx.laplacian_matrix(graph)
-    lap = sp.from_scipy(lap).to_sparse_coo().to(dtype=dtype)
+    lap = sp.from_scipy(lap).to(dtype=dtype)
     lap = lap + 1e-2 * sp.eye(n)
 
     n = graph.number_of_nodes()

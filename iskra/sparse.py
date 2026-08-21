@@ -1,12 +1,15 @@
 # Copyright (c) 2025 - present, Ana Dodik. All rights reserved.
 
 from functools import reduce
+from numbers import Number
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Literal,
     Sequence,
     cast,
+    overload,
 )
 
 import numpy as np
@@ -17,6 +20,19 @@ from iskra.profiling import profile_fn
 
 
 def index_complement(n: int, idx: torch.Tensor) -> torch.Tensor:
+    """Computes the complement of a set of linear indices.
+
+    Given a vector of linear indices `idx` into some other vector with
+    `n` elements, the function returns a vector of indices which selects
+    all elements of the vector not selected by `idx`.
+
+    Args:
+        n (int): Total number of elements in a vector.
+        idx (Tensor): Indices.
+
+    Returns:
+        Tensor: Vector of indices which select all elements not selected by `idx`.
+    """
     unknown_mask = torch.ones([n], dtype=torch.bool, device=idx.device)
     unknown_mask[idx] = False
     unknown_idx = torch.nonzero(unknown_mask).flatten()
@@ -31,11 +47,11 @@ def isect_indices(
     Assumes unique sets of indices in both function inputs.
 
     Args:
-        a_idx (torch.Tensor): First set of indices to compare.
-        b_idx (torch.Tensor): Second set of indices to compare.
+        a_idx (Tensor): First set of indices to compare.
+        b_idx (Tensor): Second set of indices to compare.
 
     Returns:
-        tuple[torch.Tensor, torch.Tensor]: Masks (one per input),
+        tuple[Tensor, Tensor]: Masks (one per input),
             that are True if the index is repeated in the other tensor.
     """
     combined = torch.cat([a_idx, b_idx], dim=-1)
@@ -53,7 +69,7 @@ def ravel_indices(
 ) -> torch.Tensor:
     """Converts a COO indices into a linear index corresponding to a strided layout.
 
-    !!! example
+    Example:
         The sparse tensor
         ```
         a = [[1.0, 0.0],
@@ -80,6 +96,18 @@ def ravel_indices(
 def unravel_index(
     linear: torch.Tensor, shape: torch.Size | tuple[int, ...]
 ) -> torch.Tensor:
+    """Converts a linear index into COO indices.
+
+    See Also:
+        This function does the opposite of `ravel_indices()`. See for more information.
+
+    Args:
+        linear (Tensor[nnz]): Linear indices into a strided layout tensor.
+        shape (torch.Size | tuple[int, ...]): Shape of the tensor.
+
+    Returns:
+        Tensor[dim, nnz]: Indices of a sparse tensor in COO format of same shape.
+    """
     linear = linear.clone()
     idx = []
     for s in reversed(shape):
@@ -468,9 +496,13 @@ class SparseTensor(torch.Tensor):
             ret = _make_sparse_subclass(ret)
         return ret
 
-    def __matmul__(
-        self, other: "SparseTensor | torch.Tensor"
-    ) -> "SparseTensor | torch.Tensor":
+    @overload
+    def __matmul__(self, other: "SparseTensor") -> "SparseTensor": ...
+
+    @overload
+    def __matmul__(self, other: torch.Tensor) -> "SparseTensor": ...
+
+    def __matmul__(self, other: "SparseTensor | torch.Tensor") -> "SparseTensor":
         """Matrix multiplication which works with sparse tensors.
 
         Allows the user to write `a @ b` with sparse tensors and still get the
@@ -487,9 +519,13 @@ class SparseTensor(torch.Tensor):
         """
         return matmul(self, other)
 
-    def __rmatmul__(
-        self, other: "SparseTensor | torch.Tensor"
-    ) -> "SparseTensor | torch.Tensor":
+    @overload
+    def __rmatmul__(self, other: "SparseTensor") -> "SparseTensor": ...
+
+    @overload
+    def __rmatmul__(self, other: torch.Tensor) -> "SparseTensor": ...
+
+    def __rmatmul__(self, other: "SparseTensor | torch.Tensor") -> "SparseTensor":
         """Matrix multiplication which works with sparse tensors.
 
         Allows the user to write `a @ b` with sparse tensors and still get the
@@ -506,9 +542,16 @@ class SparseTensor(torch.Tensor):
         """
         return matmul(self, other)
 
-    def __mul__(
-        self, other: "SparseTensor | torch.Tensor"
-    ) -> "SparseTensor | torch.Tensor":
+    @overload
+    def __mul__(self, other: "SparseTensor") -> "SparseTensor": ...
+
+    @overload
+    def __mul__(self, other: torch.Tensor) -> "SparseTensor": ...
+
+    @overload
+    def __mul__(self, other: Number) -> "SparseTensor": ...
+
+    def __mul__(self, other: "SparseTensor | torch.Tensor | Number") -> "SparseTensor":
         """Elementwise multiplication which works with sparse tensors.
 
         Important:
@@ -525,9 +568,16 @@ class SparseTensor(torch.Tensor):
         else:
             return super().__mul__(other)
 
-    def __rmul__(
-        self, other: "SparseTensor | torch.Tensor"
-    ) -> "SparseTensor | torch.Tensor":
+    @overload
+    def __rmul__(self, other: "SparseTensor") -> "SparseTensor": ...
+
+    @overload
+    def __rmul__(self, other: torch.Tensor) -> "SparseTensor": ...
+
+    @overload
+    def __rmul__(self, other: Number) -> "SparseTensor": ...
+
+    def __rmul__(self, other: "SparseTensor | torch.Tensor | Number") -> "SparseTensor":
         """Elementwise multiplication which works with sparse tensors.
 
         Important:
@@ -558,7 +608,7 @@ class SparseTensor(torch.Tensor):
         """
         return reshape(self, *shape)
 
-    def scipy(self) -> scipy.sparse.coo_array:
+    def scipy(self) -> scipy.sparse.sparray:
         """Constructs a SciPy tensor with the same data (detaches autodiff graph).
 
         Important:
@@ -663,12 +713,31 @@ def csr_tensor(
 def eye(
     n: int, dtype: torch.dtype = torch.float32, device: str | torch.device = "cpu"
 ) -> SparseTensor:
+    """Constructs a sparse COO identity matrix.
+
+    Args:
+        n (int): Size (number of rows or columns) of the matrix.
+        dtype (torch.dtype): Matrix data type. Defaults to `torch.float32`.
+        device (str | torch.device, optional): Device for the matrix. Defaults to "cpu".
+
+    Returns:
+        SparseTensor[DType, [n, n]]: Sparse `n`-by-`n` identity matrix in COO format.
+    """
     idx = torch.arange(n, device=device)
     values = torch.ones([n], dtype=dtype, device=device)
     return coo_tensor((idx, idx), values, size=[n, n], is_coalesced=True)
 
 
-def diag(values: torch.Tensor) -> SparseTensor:
+def diag(values: torch.Tensor | SparseTensor) -> SparseTensor:
+    """Constructs a sparse COO diagonal matrix from vector of diagonal elements.
+
+    Args:
+        values (Tensor[DType, [N]] | SparseTensor[DType, [N]]): Vector with values that
+            will be placed along the diagonal. Allowed to be either dense or sparse.
+
+    Returns:
+        SparseTensor[DType, [N, N]]: Sparse `N`-by-`N` identity matrix in COO format.
+    """
     if values.ndim == 2 and values.shape[-1] == 1:
         values = values.squeeze(-1)
     assert values.ndim == 1
@@ -684,9 +753,23 @@ def diag(values: torch.Tensor) -> SparseTensor:
         return coo_tensor(ii, vals, size=shape).coalesce()
 
 
-def get_diag(mat: SparseTensor | torch.Tensor) -> SparseTensor:
-    # TODO: document why it returns sparse.
-    # maybe add a flag that determines whether dense or sparse is returned?
+def get_diag(mat: SparseTensor) -> SparseTensor:
+    """Extracts diagonal from sparse COO matrix.
+
+    This function returns the diagonal as a sparse matrix. While this may seem
+    counter-intuitive at first, the reasoning behind the decision is twofold.
+    First, the diagonal itself can be very sparse and making the decision to
+    densify could potentially blow up memory usage. Second, sparse COO tensors
+    can have more than one sparse dimension. While `iskra` is not designed with
+    this usecase in mind, this function is written defensively to potentially
+    support this usecase.
+
+    Args:
+        mat (SparseTensor[DType, [N, N]]): Matrix to extract diagonal from.
+
+    Returns:
+        SparseTensor[DType, [N]]: Diagonal of the matrix as a sparse COO tensor.
+    """
     assert mat.ndim >= 2
     assert mat.shape[-1] == mat.shape[-2]
     idcs = mat.indices()
@@ -697,32 +780,117 @@ def get_diag(mat: SparseTensor | torch.Tensor) -> SparseTensor:
     ).coalesce()
 
 
-def inv_diag(mat: torch.Tensor) -> torch.Tensor:
-    return diag(1.0 / get_diag(mat))
+def inv_diag(mat: SparseTensor) -> SparseTensor:
+    """Inverts elements of a diagonal COO matrix.
+
+    The function densifies the diagonal of a sparse matrix and divisions by the
+    zero non-diagonal elements become NaNs.
+    This default behavior is subject to change given a good real-world usecase
+    that requires inverting only the non-zero elements: please leave an issue if
+    you have one.
+
+    Args:
+        mat (SparseTensor): Diagonal COO matrix.
+
+    Returns:
+        SparseTensor: COO matrix of the same shape, but with
+    """
+    return diag(1.0 / get_diag(mat).to_dense())
 
 
 def from_scipy(
-    x: scipy.sparse.sparray, device: torch.device | str = "cpu"
+    x: scipy.sparse.coo_array | scipy.sparse.csr_array,
+    device: torch.device | str = "cpu",
 ) -> SparseTensor:
-    x_coo = x.tocoo()
-    row = torch.tensor(x_coo.row, device=device)
-    col = torch.tensor(x_coo.col, device=device)
-    data = torch.tensor(x_coo.data, device=device)
-    x_torch = coo_tensor((row, col), data, size=x.shape)
-    x_torch = x_torch.to_sparse_csr()
+    """Converts SciPy sparse COO/CSR arrays into PyTorch sparse tensors.
+
+    Args:
+        x (scipy.sparse.coo_array | scipy.sparse.csr_array): SciPy sparse array to
+            be converted.
+        device (torch.device | str): Specifies the device on which to
+            construct the tensor. Defaults to "cpu".
+
+    Raises:
+        ValueError: Throws an exception if the input array is neither COO nor CSR.
+
+    Returns:
+        SparseTensor: PyTorch tensor with the same data.
+    """
+    if x.format == "coo":
+        if TYPE_CHECKING:
+            assert isinstance(x, scipy.sparse.coo_array)
+
+        row = torch.tensor(x.row, device=device)
+        col = torch.tensor(x.col, device=device)
+        data = torch.tensor(x.data, device=device)
+        x_torch = coo_tensor((row, col), data, size=x.shape)
+    elif x.format == "csr":
+        if TYPE_CHECKING:
+            assert isinstance(x, scipy.sparse.csr_array)
+
+        crow = torch.tensor(x.indptr, device=device)
+        col = torch.tensor(x.indices, device=device)
+        data = torch.tensor(x.data, device=device)
+        x_torch = csr_tensor(crow, col, data, size=x.shape)
+    else:
+        raise ValueError(
+            f"Passed SciPy array with format={x.format}. "
+            "SciPy conversion supported for COO and CSR only."
+        )
     return x_torch
 
 
-def to_scipy(x: SparseTensor | torch.Tensor) -> scipy.sparse.coo_array:
-    x = x.detach().to_sparse_coo().coalesce()
-    if x.values().is_cuda:
-        data = x.values().cpu().numpy()
-        idcs = x.indices().cpu().numpy().astype(np.int64)
+def to_scipy(
+    x: SparseTensor | torch.Tensor,
+) -> scipy.sparse.coo_array | scipy.sparse.csr_array:
+    """Converts PyTorch sprase COO/CSR tensors into SciPy sparse arrays.
+
+    If the input is on the CPU and does not require gradients, we will return a
+    view into the data. If the data is on the GPU or requires gradients, the tensor
+    will be cloned and a view into that tensor will be returned.
+
+    Since SciPy does not perform type erasure when it comes to sparse layouts, this
+    function can only return the type `scipy.sparse.coo_array | scipy.sparse.csr_array`,
+    which might make your type checker complain if you call any functions specific to
+    either layout. If this happens, you can always follow this function up with, e.g.,
+    `assert isinstance(y, scipy.sparse.csr_array)` to silence the type checker.
+
+    Args:
+        x (SparseTensor | torch.Tensor): COO or CSR tensor to be converted.
+
+    Raises:
+        ValueError: Throws an exception if the input tensor is neither COO nor CSR.
+
+    Returns:
+        scipy.sparse.coo_array | scipy.sparse.csr_array: SciPy array with the same data.
+    """
+    if x.layout == torch.sparse_coo:
+        x = x.detach().coalesce()
+        if x.values().is_cuda:
+            data = x.values().cpu().numpy()
+            idcs = x.indices().cpu().numpy()
+        else:
+            # if on CPU, .numpy creates view
+            data = x.values().numpy()
+            idcs = x.indices().numpy()
+        x_scipy = scipy.sparse.coo_array((data, (idcs[0], idcs[1])), shape=x.shape)
+    elif x.layout == torch.sparse_csr:
+        x = x.detach()
+        if x.values().is_cuda:
+            data = x.values().cpu().numpy()
+            indptr = x.crow_indices().cpu().numpy().astype(np.int64)
+            idcs = x.col_indices().cpu().numpy().astype(np.int64)
+        else:
+            # if on CPU, .numpy creates view
+            data = x.values().numpy()
+            indptr = x.crow_indices().numpy()
+            idcs = x.col_indices().numpy()
+        x_scipy = scipy.sparse.csr_array((data, idcs, indptr), shape=x.shape)
     else:
-        # if on CPU, .numpy creates view
-        data = x.values().numpy()
-        idcs = x.indices().numpy().astype(np.int64)
-    x_scipy = scipy.sparse.coo_array((data, (idcs[0], idcs[1])), shape=x.shape)
+        raise ValueError(
+            f"Passed tensor with layout={x.layout}. "
+            "SciPy conversion supported for COO and CSR only."
+        )
     return x_scipy
 
 
@@ -909,6 +1077,21 @@ def get_slice(x: SparseTensor, *indices: _INDEX_TYPE) -> SparseTensor:
 def fill_slice(
     x: SparseTensor, fill_value: float | int, *indices: slice | int | tuple[int, ...]
 ) -> SparseTensor:
+    """Sets all nonzero entries in a slice of a sparse COO tensor to a chosen value.
+
+    This function leaves zero values unmodified. If you want to modify the zero
+    values, use `iskra.sparse.append()`.
+    See `iskra.sparse.get_slice()` to see how the slicing is performed.
+
+    Args:
+        x (SparseTensor): Sparse tensor to fill.
+        fill_value (float | int): The value for the nonzero entries in the slice.
+        *indices (None | slice | int | Tensor[bool | int, ...] | tuple[int, ...]):
+            Slicing masks, one per dimension of input tensor.
+
+    Returns:
+        SparseTensor: Tensor with modified nonzero entries within the slice.
+    """
     assert x.layout == torch.sparse_coo
     mask, _ = _build_index_selection_mask(x, *indices)
     selected_idx = x.indices()
@@ -926,11 +1109,25 @@ def fill_slice(
 def zero_slice(
     x: SparseTensor, *indices: slice | int | tuple[int, ...]
 ) -> SparseTensor:
+    # TODO: this function should probably be getting rid of nnz entries!
     assert x.layout == torch.sparse_coo
     return fill_slice(x, 0, *indices)
 
 
 def reshape(x: SparseTensor, *shape: int) -> SparseTensor:
+    """Returns a sparse COO tensor with the same data, but with the specified shape.
+
+    Warn:
+        Unlike PyTorch's default reshape, we do not support $-1$ as one of the
+        dimensions.
+
+    Args:
+        x (SparseTensor): Tensor to be reshaped.
+        *shape (int): The new shape.
+
+    Returns:
+        SparseTensor: Reshaped tensor.
+    """
     assert x.layout == torch.sparse_coo
     assert len(x.shape) == 2, x.shape[0] == x.shape[1]
     x = x.coalesce()
@@ -942,6 +1139,16 @@ def reshape(x: SparseTensor, *shape: int) -> SparseTensor:
 
 
 def repdiag(x: SparseTensor, n_reps: int) -> SparseTensor:
+    """Repeats a sparse COO matrix along a diagonal to make a block-diagonal matrix.
+
+    Args:
+        x (SparseTensor): Matrix to repeat.
+        n_reps (int): Number of repetitions.
+
+    Returns:
+        SparseTensor: Block-diagonal matrix with `x` embedded along the diagonal
+            `n_reps` times.
+    """
     assert len(x.shape) == 2, x.shape[0] == x.shape[1]
     x = x.coalesce()
     indices = x.indices()
@@ -956,7 +1163,21 @@ def repdiag(x: SparseTensor, n_reps: int) -> SparseTensor:
     )
 
 
-def cat(xs: Sequence[SparseTensor], dim=0) -> SparseTensor:
+def cat(xs: Sequence[SparseTensor], dim: int = 0) -> SparseTensor:
+    """Concatenates sparse COO matrices along a dimension.
+
+    Args:
+        xs (Sequence[SparseTensor]): Sequences of matrices to cocnatenate.
+            Matrix shapes must match in all dimensions except `dim`.
+        dim (int, optional): Dimension to concatenate in. Defaults to 0.
+
+    Raises:
+        ValueError: Throws an exception if shapes do not match in all dimensions
+            except `dim.`
+
+    Returns:
+        SparseTensor: Concatenated sparse COO matrix.
+    """
     assert isinstance(xs, Sequence)
     for x in xs:
         assert isinstance(x, torch.Tensor)
@@ -990,6 +1211,19 @@ def cat(xs: Sequence[SparseTensor], dim=0) -> SparseTensor:
 def append(
     x: SparseTensor, indices: torch.Tensor, values: torch.Tensor
 ) -> SparseTensor:
+    """Appends new values to an existing COO tensor.
+
+    In the case of an attempt to add values to already existing indices, the values are
+    added together.
+
+    Args:
+        x (SparseTensor): Sparse COO tensor to which we will append values.
+        indices (torch.Tensor): Indices for the new values.
+        values (torch.Tensor): The new values.
+
+    Returns:
+        SparseTensor: Sparse COO tensor containing both the old and new values.
+    """
     assert x.layout == torch.sparse_coo
     return coo_tensor(
         torch.cat([x.indices(), indices.to(x.device)], -1),
@@ -998,7 +1232,37 @@ def append(
     ).coalesce()
 
 
-def mul_sparse_sparse(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+@overload
+def mul_sparse_sparse(a: SparseTensor, b: SparseTensor) -> SparseTensor: ...
+
+
+@overload
+def mul_sparse_sparse(a: torch.Tensor, b: SparseTensor) -> SparseTensor: ...
+
+
+@overload
+def mul_sparse_sparse(a: SparseTensor, b: torch.Tensor) -> SparseTensor: ...
+
+
+@overload
+def mul_sparse_sparse(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor: ...
+
+
+def mul_sparse_sparse(
+    a: SparseTensor | torch.Tensor, b: SparseTensor | torch.Tensor
+) -> SparseTensor | torch.Tensor:
+    """Elementwise product of two sparse COO tensors.
+
+    Args:
+        a (SparseTensor | torch.Tensor): First tensor to multiply.
+        b (SparseTensor | torch.Tensor): Second tensor to multiply.
+
+    Raises:
+        ValueError: Two tensors must have the same shape.
+
+    Returns:
+        SparseTensor | torch.Tensor: Elementwise product of the two tensors.
+    """
     if a.shape != b.shape:
         raise ValueError(
             "Sparse-sparse elementwise multiplication only supports same shape tensors."
@@ -1018,7 +1282,37 @@ def mul_sparse_sparse(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     )
 
 
-def mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+@overload
+def mul(a: SparseTensor, b: SparseTensor) -> SparseTensor: ...
+
+
+@overload
+def mul(a: torch.Tensor, b: SparseTensor) -> SparseTensor: ...
+
+
+@overload
+def mul(a: SparseTensor, b: torch.Tensor) -> SparseTensor: ...
+
+
+@overload
+def mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor: ...
+
+
+def mul(
+    a: SparseTensor | torch.Tensor, b: SparseTensor | torch.Tensor
+) -> SparseTensor | torch.Tensor:
+    """Elementwise product of two tensors with support for sparse COO tensors.
+
+    Args:
+        a (SparseTensor | torch.Tensor): First tensor to multiply.
+        b (SparseTensor | torch.Tensor): Second tensor to multiply.
+
+    Raises:
+        ValueError: If both tensors are sparse, they must have the same shape.
+
+    Returns:
+        SparseTensor | torch.Tensor: Elementwise product of the two tensors.
+    """
     # TODO: csr matrices
     if not is_sparse_any(a) and not is_sparse_any(b):
         return a * b
@@ -1042,10 +1336,46 @@ def mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return coo_tensor(idx, new_vals, size=out_shape).coalesce()
 
 
+@overload
+def matmul(a: SparseTensor, b: SparseTensor) -> SparseTensor: ...
+
+
+@overload
+def matmul(a: torch.Tensor, b: SparseTensor) -> SparseTensor: ...
+
+
+@overload
+def matmul(a: SparseTensor, b: torch.Tensor) -> SparseTensor: ...
+
+
+@overload
+def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor: ...
+
+
 def matmul(
     a: SparseTensor | torch.Tensor, b: SparseTensor | torch.Tensor
 ) -> SparseTensor | torch.Tensor:
-    # TODO: Differentiating through this function produces sparse gradients if the input tensor is sparse.
+    """Matrix-matrix product with support for sparse COO tensors.
+
+    Unlike PyTorch's default, differentiating through this function produces sparse
+    gradients through the sparse inputs. `SparseTensor.__matmul__` wraps around this
+    function, meaning that, unlike PyTorch, `a @ b` is not a foot-gun in `iskra`.
+
+    Warn:
+        In case of a sparse-dense product, the sparse matrix is internally
+        converted to the CSR format. This limitation stems from PyTorch's implementation
+        of sparse COO matrices, which would produce dense gradients by default.
+        You might want to consider converting it to CSR yourself before calling matmul.
+
+    Args:
+        a (SparseTensor | torch.Tensor): First tensor to be multiplied.
+        b (SparseTensor | torch.Tensor): Second tensor to be multiplied.
+
+    Returns:
+        SparseTensor | torch.Tensor: Product `a @ b`.
+    """
+    # TODO: Differentiating through this function produces sparse gradients
+    # if the input tensor is sparse.
     if not is_sparse_any(a) and not is_sparse_any(b):
         result = a @ b
     elif is_sparse_any(a) and is_sparse_any(b):
@@ -1083,6 +1413,16 @@ def matmul(
 
 
 def square(x: SparseTensor) -> SparseTensor:
+    """Elementwise square of sparse tensors.
+
+    Patches a lack of support for this function in PyTorch for CSR tensors.
+
+    Args:
+        x (SparseTensor): Sparse tensor to square.
+
+    Returns:
+        SparseTensor: Sparse tensor with each entry squared.
+    """
     if x.is_sparse_csr:
         return csr_tensor(
             x.crow_indices(),

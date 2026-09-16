@@ -1,6 +1,33 @@
-![](logo.svg)
+<p align="center">
+  <a href="https://iskra-graphics.org"><img src="_static/logo.svg" alt="iskra" width="800"></a>
+</p>
+<div align="center">
 
 # `iskra` ✨ Modern Geometry Processing
+
+</div>
+<p align="center">
+<a href="https://iskra-graphics.org">
+    <img src="https://img.shields.io/badge/docs-iskra--graphics.org-2088c3" alt="Documentation">
+</a>
+<a href="https://pypi.org/project/iskra-graphics/">
+    <img src="https://img.shields.io/pypi/v/iskra-graphics" alt="Package version">
+</a>
+<a href="https://pypi.org/project/iskra-graphics/">
+    <img src="https://img.shields.io/pypi/pyversions/iskra-graphics" alt="Supported Python versions">
+</a>
+<a href="https://github.com/anadodik/iskra/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+</a>
+</p>
+
+---
+
+**Documentation**: [https://iskra-graphics.org](https://iskra-graphics.org)
+
+**Source Code**: [https://github.com/anadodik/iskra](https://github.com/anadodik/iskra)
+
+---
 
 Lightweight geometry processing library that is a one-stop shop for all your geometric needs. Iskra is:
 * modern and Python-first,
@@ -9,11 +36,11 @@ Lightweight geometry processing library that is a one-stop shop for all your geo
 * CPU and GPU enabled,
 * actievely maintained.
 
-Support the project by starring it here:
+Support the project by starring it:
 [![GitHub stars](https://img.shields.io/github/stars/anadodik/iskra?style=social)](https://github.com/anadodik/iskra/stargazers)
 
 > [!WARNING]
-> This is a pre-release. We are actively working on a user guide, documentation, and setting up on PyPI.
+> This is a pre-release. We are actively working on a user guide, documentation.
 
 ## Example
 
@@ -53,6 +80,11 @@ The code has been tested with `torch==2.12`, but will likely work with other ver
 
 Finally, install `iskra` ✨ to your active environment using:
 ```bash
+pip install iskra-graphics
+```
+
+Alternatively, if you prefer the most recent dev version:
+```bash
 pip install -e git+https://github.com/anadodik/iskra/
 ```
 
@@ -68,6 +100,7 @@ pip install --no-build-isolation -Ceditable.rebuild=true -ve .
 
 ## FAQ
 1. **Why the name?** Iskra means “spark” in Serbo-Croatian: a spark enables using (a) torch. We also expect our system to be the spark that ignites exciting research in geometry. Most importantly, it sounds cool.
+2. **How much of `iskra` ✨ is LLM generated?** Iskra started back in 2022 at the start of my PhD because I enjoy writing and learning geometry algorithms. It is therefore almost entirely good old fashioned free range human generated slop, except for a select few parts. These are clearly marked in the codebase. [Doing it this way had some benefits beyond being fun: deeply bonding with PyTorch geometry code lead me to the tensor-based scatter-gather abstraction!]
 
 ```{toctree}
 :maxdepth: 2

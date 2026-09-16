@@ -7,6 +7,8 @@ torch, which is deliberately not a dependency of the package.
 The top-level ``iskra`` package is still imported first: on Windows delvewheel
 patches its ``__init__`` with the bootstrap that puts the vendored DLLs on the
 search path, and loading the extension by file path skips that otherwise.
+
+WARNING: This code is fully LLM generated and has not been verified by a human.
 """
 
 import importlib.util

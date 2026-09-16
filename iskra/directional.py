@@ -420,6 +420,32 @@ def smooth_n_rosy(
     return transported
 
 
+def _normalize_idcs_and_vals(
+    idcs: int | Iterable[int] | torch.Tensor | None,
+    vals: complex | Iterable[complex] | torch.Tensor | None,
+    vals_dim: int,
+    dtype: torch.dtype,
+    device: torch.device | str,
+):
+    if isinstance(idcs, int):
+        idcs = torch.tensor([idcs], dtype=torch.long, device=device)
+    elif idcs is None:
+        idcs = torch.tensor([], dtype=torch.long, device=device)
+    elif not isinstance(idcs, torch.Tensor):
+        idcs = torch.tensor(idcs, dtype=torch.long, device=device)
+
+    if isinstance(vals, tuple) | isinstance(vals, complex) | isinstance(vals, float):
+        vals = torch.tensor([vals], dtype=dtype, device=device)
+    elif vals is None:
+        if vals_dim == 1:
+            vals = torch.empty([0], dtype=dtype, device=device)
+        else:
+            vals = torch.empty([0, vals_dim], dtype=dtype, device=device)
+    elif not isinstance(vals, torch.Tensor):
+        vals = torch.tensor(vals, dtype=dtype, device=device)
+    return idcs, vals
+
+
 def smooth_frame_field(
     verts: torch.Tensor,
     faces: torch.Tensor,
@@ -429,7 +455,10 @@ def smooth_frame_field(
     source_vals: complex | Iterable[complex] | torch.Tensor | None = None,
     partial_idcs: int | Iterable[int] | torch.Tensor | None = None,
     partial_vals: complex | Iterable[complex] | torch.Tensor | None = None,
+    soft_idcs: int | Iterable[int] | torch.Tensor | None = None,
+    soft_vals: complex | Iterable[complex] | torch.Tensor | None = None,
     ortho_reg_lambda: float = 0.0,
+    soft_reg_lambda: float = 0.0,
 ) -> torch.Tensor:
     """Smooth a frame field with sparse hard constraints.
 
@@ -446,57 +475,53 @@ def smooth_frame_field(
         source_idcs (int | Iterable[int] | Tensor[Int64, [S]]): Indices of
             faces with hard constraints.
         source_vals (tuple[complex, complex] | Tensor[Complex, [S, 2]]): Complex
-            polyvector coefficients to be transported. Use `to_intrinsic_frame_field()`
-            to project extrinsic vectors to intrinsic ones.
+            polyvector coefficients to use as hard constraints. Use
+            `to_intrinsic_frame_field()` to project extrinsic vectors to intrinsic ones.
         partial_idcs (int | Iterable[int] | Tensor[Int64, [P]]): Indices of
             faces with hard partial constraints.
         partial_vals (tuple[complex, complex] | Tensor[Complex, [P]]): Complex 2-RoSy
             polyvector coefficients to be transported.  Use `to_intrinsic_frame_field()`
             with `n=2` to project extrinsic vectors to intrinsic ones.
-        ortho_reg_lambda (float): Strength of an orthogonality regularizer.
+        soft_idcs (int | Iterable[int] | Tensor[Int64, [S]]): Indices of
+            faces with soft alignment constraints.
+        soft_vals (tuple[complex, complex] | Tensor[Complex, [S, 2]]): Complex
+            polyvector coefficients to use as soft constraints. Use
+            `to_intrinsic_frame_field()` to project extrinsic vectors to intrinsic ones.
+        ortho_reg_lambda (float): Strength of the orthogonality regularizer.
             Regularization disabled when `ortho_reg_lambda=0.0`.
+        soft_reg_lambda (float): Strength of the soft-alignment regularizer.
+            Regularization disabled when `soft_reg_lambda=0.0`.
 
     Returns:
         Tensor[Complex, [F, 2]]: Smoothed vectors.
     """
     sources_exist = source_idcs is not None and source_vals is not None
     partial_exist = partial_idcs is not None and partial_vals is not None
-    if not sources_exist and not partial_exist:
-        raise ValueError("Must specify either partial or full hard constraints.")
+    soft_exist = soft_idcs is not None and soft_vals is not None
+    if not sources_exist and not partial_exist and not soft_exist:
+        raise ValueError(
+            "Must specify either partial or full hard constraints, or soft constraints."
+        )
 
     device = verts.device
-    if sources_exist:
+    if sources_exist and isinstance(source_vals, torch.Tensor):
         dtype = source_vals.dtype
-    else:
+    elif partial_exist and isinstance(partial_vals, torch.Tensor):
         dtype = partial_vals.dtype
+    elif soft_exist and isinstance(soft_vals, torch.Tensor):
+        dtype = soft_vals.dtype
+    else:
+        dtype = torch.complex64
 
-    if isinstance(source_idcs, int):
-        source_idcs = torch.tensor([source_idcs], device=device)
-    elif source_idcs is None:
-        source_idcs = torch.tensor([], dtype=torch.long, device=device)
-    elif not isinstance(source_idcs, torch.Tensor):
-        source_idcs = torch.tensor(source_idcs, device=device)
-
-    if isinstance(source_vals, tuple):
-        source_vals = torch.tensor([source_vals], device=device)
-    elif source_vals is None:
-        source_vals = torch.empty([0, 2], dtype=dtype, device=device)
-    elif not isinstance(source_vals, torch.Tensor):
-        source_vals = torch.tensor(source_vals, device=device)
-
-    if isinstance(partial_idcs, int):
-        partial_idcs = torch.tensor([partial_idcs], device=device)
-    elif partial_idcs is None:
-        partial_idcs = torch.tensor([], dtype=torch.long, device=device)
-    elif not isinstance(partial_idcs, torch.Tensor):
-        partial_idcs = torch.tensor(partial_idcs, device=device)
-
-    if isinstance(partial_vals, complex):
-        partial_vals = torch.tensor([partial_vals], device=device)
-    elif partial_vals is None:
-        partial_vals = torch.tensor([], dtype=dtype, device=device)
-    elif not isinstance(partial_vals, torch.Tensor):
-        partial_vals = torch.tensor(partial_vals, device=device)
+    source_idcs, source_vals = _normalize_idcs_and_vals(
+        source_idcs, source_vals, 2, dtype, device
+    )
+    partial_idcs, partial_vals = _normalize_idcs_and_vals(
+        partial_idcs, partial_vals, 1, dtype, device
+    )
+    soft_idcs, soft_vals = _normalize_idcs_and_vals(
+        soft_idcs, soft_vals, 2, dtype, device
+    )
 
     laplacian_2, mass_e = face_connection_laplacian(verts, faces, flaps, connection**2)
     laplacian_4, _ = face_connection_laplacian(verts, faces, flaps, connection**4)
@@ -522,16 +547,31 @@ def smooth_frame_field(
     )
 
     system = block_laplacian / mass_e.sum()
+    rhs = block_rhs
+
+    areas = triangle_areas(face_index(verts, faces)).to(dtype=laplacian_2.dtype)
     if ortho_reg_lambda > 0:
-        areas = triangle_areas(face_index(verts, faces)).to(dtype=laplacian_2.dtype)
         total_area = areas.sum()
         ortho_reg = sp.cat_diag([sp.diag(areas), sp.zeros([n_faces, n_faces])])
         # 3 * total_area comes from https://github.com/avaxman/Directional/blob/25738730958f0bfa68289ae628a5cd3c4b719d61/include/directional/polyvector_field.h#L192
-        # 3 because (n - 1).
+        # 3 because (n - 1) = 3, I guess?
         system = system + 1 / (3 * total_area) * ortho_reg_lambda * ortho_reg
+    if soft_reg_lambda > 0 and soft_exist:
+        soft_areas = areas[soft_idcs]
+        total_soft_area = soft_areas.sum()
+        soft_mass_mat = sp.repdiag(
+            sp.coo_tensor([soft_idcs, soft_idcs], soft_areas, size=[n_faces, n_faces]),
+            2,
+        )
+        soft_targets = torch.zeros_like(rhs)
+        soft_targets[soft_idcs] = soft_vals[:, 0]
+        soft_targets[n_faces + soft_idcs] = soft_vals[:, 1]
+        system = system + 1 / (total_soft_area) * soft_reg_lambda * soft_mass_mat
+        soft_rhs = soft_mass_mat @ soft_targets
+        rhs = rhs + (1 / total_soft_area) * soft_reg_lambda * soft_rhs
 
     system = partial_proj.adjoint() @ system @ partial_proj
-    rhs = torch.cat([block_rhs])
+    rhs = partial_proj.adjoint() @ rhs
     _, transported = min_quadratic_energy(
         system,
         rhs,
